@@ -1,0 +1,48 @@
+name: Cheddar
+options:
+  bundleIdPrefix: com.breadthe
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Sign to Run Locally (ad-hoc); no team, no notarization.
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+targets:
+  Cheddar:
+    type: application
+    platform: macOS
+    sources: [Cheddar]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.breadthe.Cheddar
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Cheddar
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # "Claude Code here" drives Terminal with AppleScript.
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Cheddar opens a Terminal window in a worktree and runs Claude Code there."
+        # The sandbox blocks running git on arbitrary folders.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+  CheddarTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [CheddarTests]
+    dependencies:
+      - target: Cheddar
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Cheddar:
+    build:
+      targets:
+        Cheddar: all
+    test:
+      targets: [CheddarTests]
