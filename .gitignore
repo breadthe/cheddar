@@ -4,3 +4,6 @@ build/
 DerivedData/
 xcuserdata/
 .DS_Store
+
+# Demo repos made by scripts/make-demo.sh (for screenshots)
+demo/
