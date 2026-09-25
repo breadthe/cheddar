@@ -66,3 +66,7 @@ scripts/make-icons.sh
 - **Worktree folders:** Cheddar's own worktrees go in `<repo>/.cheddar/worktrees/`, and Cheddar adds `.cheddar/` to `.git/info/exclude`.
 - **First run of "Claude Code Here":** macOS asks whether Cheddar may control Terminal. You can change that later in System Settings → Privacy & Security → Automation.
 - **App Sandbox is off,** because the sandbox blocks running git on arbitrary folders.
+
+## License
+
+[MIT](LICENSE)
