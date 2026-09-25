@@ -85,6 +85,10 @@ Actions (hover or **⋯** menu):
 - **Rename…** — renames the branch; if it's checked out in a Cheddar-made worktree, you're asked whether to also move that worktree's folder.
 - **Delete…** — deletes the branch (only when it isn't checked out anywhere). If it has commits not reachable from HEAD or its upstream, Cheddar asks again before force-deleting (`-D`); those commits stay recoverable from the reflog for a while.
 
+### Deleting several branches
+
+Each branch row has a checkbox (disabled for branches checked out in a worktree, which git won't delete). While any are checked, the **Branches** header shows the count, **Clear**, and **Delete Selected…**. The confirmation lists each branch with whether it's merged into trunk and whether it tracks an upstream or is local only. Cheddar then runs `git branch -d` on each, one at a time: branches that aren't fully merged are **skipped**, never force-deleted. The summary lists what was deleted and what was skipped (with git's reason); a skipped unmerged branch can still be removed with **Force Delete (-D)…**, which asks again first.
+
 ## Remote branches
 
 Branches on a remote that aren't tracked by any local branch appear under **Remote Branches**, next to the last time you fetched. A local branch's own upstream is instead shown as an indented row directly under that branch.
@@ -149,7 +153,7 @@ When a discovery root (like `.cheddar/worktrees` or `.claude/worktrees`) isn't y
 
 ## Command Log
 
-**View → Show Command Log** (⇧⌘L) opens a bottom panel listing every git command Cheddar has run in the current session, with its working directory, exit code, and output — useful for seeing exactly what Cheddar is doing, or diagnosing a failure. **Clear** empties it.
+**View → Show Command Log** (⇧⌘L) opens a bottom panel listing every git command Cheddar has run in the current session, with its working directory, exit code, and output. Each command is colored by role: `git` and the subcommand in your accent color, flags (`-b`, `--force`) in gray, and paths, refs and values in the normal text color. It's useful for seeing exactly what Cheddar is doing, or diagnosing a failure. **Clear** empties it.
 
 ## Settings
 

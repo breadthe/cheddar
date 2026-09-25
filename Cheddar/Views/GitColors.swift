@@ -37,6 +37,15 @@ enum GitColors {
     static let behind = Color.red
     static let clean = Color.secondary
 
+    /// Command log words: `git` and the subcommand in the accent color, flags secondary, the rest primary.
+    static func command(_ role: CommandToken.Role) -> Color {
+        switch role {
+        case .program, .subcommand: .accentColor
+        case .flag: .secondary
+        case .argument: .primary
+        }
+    }
+
     static func branch(checkedOutIn worktree: Worktree?) -> Color {
         guard let worktree else { return localBranch }
         return worktree.origin == .main ? currentBranch : worktreeBranch

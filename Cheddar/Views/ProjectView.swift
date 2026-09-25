@@ -91,6 +91,7 @@ struct ProjectView: View {
                     HStack {
                         Text("Branches")
                         Spacer()
+                        bulkDeleteControls
                         Button {
                             model.sheet = .newBranch(base: nil)
                         } label: {
@@ -180,6 +181,11 @@ struct ProjectView: View {
         let tag = "b:\(branch.name)"
         let checkout = snapshot.worktree(checkingOut: branch.name)
         return HStack {
+            Toggle("Select \(branch.name)", isOn: checkedBinding(for: branch.name, deletable: checkout == nil))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .disabled(checkout != nil || model.isBusy)
+                .help(checkout.map { "Checked out in \($0.displayName)" } ?? "Select for Delete Selected…")
             BranchRow(branch: branch, checkedOutIn: checkout, trunk: snapshot.trunk, trackedRemote: trackedRemote)
             if checkout == nil {
                 hoverButton("+ Worktree", tag: tag, help: "New worktree on this branch") {
@@ -193,10 +199,44 @@ struct ProjectView: View {
         .listRowBackground(highlight(branch.name))
     }
 
+    /// A branch checked out in a worktree can't be deleted, so it never shows as checked.
+    private func checkedBinding(for name: String, deletable: Bool) -> Binding<Bool> {
+        Binding(
+            get: { deletable && model.checkedBranches.contains(name) },
+            set: { checked in
+                if checked { model.checkedBranches.insert(name) } else { model.checkedBranches.remove(name) }
+            }
+        )
+    }
+
+    /// "3 selected · Clear · Delete Selected…" in the Branches header, while any branch is checked.
+    @ViewBuilder
+    private var bulkDeleteControls: some View {
+        let branches = model.branchesToDelete
+        if !branches.isEmpty {
+            Text("\(branches.count) selected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Clear") { model.checkedBranches = [] }
+                .buttonStyle(.borderless)
+                .help("Uncheck every branch")
+            Button("Delete Selected…", role: .destructive) { model.sheet = .deleteBranches(branches) }
+                .buttonStyle(.borderless)
+                .disabled(model.isBusy)
+                .help("Delete the checked branches with git branch -d")
+        }
+    }
+
     /// The remote branch `branch` tracks, as its own row under it. Hovering either highlights both.
     private func trackedRemoteRow(_ remote: RemoteBranch, of branch: Branch) -> some View {
         let tag = "rt:\(branch.name):\(remote.ref)"
         return HStack {
+            // Keeps it indented under its branch row, which starts with a checkbox.
+            Toggle("", isOn: .constant(false))
+                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .hidden()
+                .accessibilityHidden(true)
             RemoteBranchRow(remote: remote, trackingBranch: branch)
             rowMenu(tag) { remoteActions(remote, tracked: true) }
         }
@@ -609,6 +649,8 @@ struct ProjectView: View {
             NewWorktreeSheet(model: model, snapshot: snapshot, existingBranch: existingBranch)
         case .newBranch(let base):
             NewBranchSheet(model: model, snapshot: snapshot, base: base)
+        case .deleteBranches(let branches):
+            DeleteBranchesSheet(model: model, branches: branches, trunk: snapshot.trunk)
         case .rename(let request):
             RenameSheet(model: model, request: request)
         case .deleteWorktree(let worktree, let changes):
@@ -742,17 +784,8 @@ private struct Confirmations: ViewModifier {
                     Task { await model.deleteBranch(branch.name, force: false) }
                 }
             }
-            .confirmationDialog(
-                "“\(model.unmergedBranch ?? "")” isn't fully merged",
-                isPresented: isPresented($model.unmergedBranch),
-                presenting: model.unmergedBranch
-            ) { branch in
-                Button("Delete Anyway", role: .destructive) {
-                    Task { await model.deleteBranch(branch, force: true) }
-                }
-                Button("Keep Branch", role: .cancel) {}
-            } message: { _ in
-                Text("It has commits that aren't in HEAD or its upstream. Deleting it with -D drops them; they stay recoverable from the reflog for a while.")
+            .unmergedBranchConfirmation($model.unmergedBranch) { branch in
+                await model.deleteBranch(branch, force: true)
             }
             .confirmationDialog(
                 "Delete \(model.remoteBranchToDelete?.shortName ?? "") on \(model.remoteBranchToDelete?.remote ?? "the remote")?",
@@ -821,6 +854,24 @@ private struct Confirmations: ViewModifier {
 
     private func isPresented<T>(_ item: Binding<T?>) -> Binding<Bool> {
         Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
+}
+
+extension View {
+    /// “x isn't fully merged”: `git branch -d` refused `branch`; offers `-D` with a warning.
+    func unmergedBranchConfirmation(_ branch: Binding<String?>, deleteAnyway: @escaping (String) async -> Void) -> some View {
+        confirmationDialog(
+            "“\(branch.wrappedValue ?? "")” isn't fully merged",
+            isPresented: Binding(get: { branch.wrappedValue != nil }, set: { if !$0 { branch.wrappedValue = nil } }),
+            presenting: branch.wrappedValue
+        ) { name in
+            Button("Delete Anyway", role: .destructive) {
+                Task { await deleteAnyway(name) }
+            }
+            Button("Keep Branch", role: .cancel) {}
+        } message: { _ in
+            Text("It has commits that aren't in HEAD or its upstream. Deleting it with -D drops them; they stay recoverable from the reflog for a while.")
+        }
     }
 }
 

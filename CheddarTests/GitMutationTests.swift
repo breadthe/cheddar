@@ -190,6 +190,26 @@ final class GitMutationTests: XCTestCase {
         XCTAssertFalse(branches.contains("spike"))
     }
 
+    func testBulkDeleteSkipsUnmergedBranches() async throws {
+        try await service.createBranch("merged-a", base: nil, in: repo.repo)
+        try await service.createBranch("merged-b", base: nil, in: repo.repo)
+        try await service.createBranch("spike", base: nil, in: repo.repo)
+        try await service.createWorktree(named: "spike", branch: .existing("spike"), in: repo.repo)
+        let spike = try await worktree(onBranch: "spike")
+        try await repo.run("commit", "--allow-empty", "-m", "only on spike", in: URL(fileURLWithPath: spike.path))
+        try await service.removeWorktree(spike, force: false, in: repo.repo)
+        try await service.createBranch("busy", base: nil, in: repo.repo)
+        try await service.createWorktree(named: "busy", branch: .existing("busy"), in: repo.repo)
+
+        let result = try await service.deleteBranches(["merged-a", "spike", "busy", "merged-b"], in: repo.repo)
+
+        XCTAssertEqual(result.deleted, ["merged-a", "merged-b"])
+        XCTAssertEqual(result.skipped.map(\.name), ["spike", "busy"])
+        XCTAssertEqual(result.skipped.map(\.isUnmerged), [true, false])
+        let branches = try await branchNames()
+        XCTAssertEqual(branches, ["main", "spike", "busy"])
+    }
+
     func testDeleteMergedBranch() async throws {
         try await service.createBranch("merged", base: nil, in: repo.repo)
         try await service.deleteBranch("merged", force: false, in: repo.repo)

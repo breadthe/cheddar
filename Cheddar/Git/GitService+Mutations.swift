@@ -140,4 +140,35 @@ extension GitService {
     func deleteBranch(_ name: String, force: Bool, in repo: URL) async throws {
         try await git.output(["branch", force ? "-D" : "-d", name], in: repo)
     }
+
+    /// `git branch -d` on each branch, one at a time. Branches git refuses (unmerged, checked out) are
+    /// skipped, never force-deleted. Anything other than a git refusal (git missing, cancellation) stops
+    /// the batch and is thrown.
+    func deleteBranches(_ names: [String], in repo: URL) async throws -> BranchDeletionResult {
+        var result = BranchDeletionResult()
+        for name in names {
+            do {
+                try await deleteBranch(name, force: false, in: repo)
+                result.deleted.append(name)
+            } catch let error as GitError {
+                result.skipped.append(.init(name: name, reason: error.localizedDescription, isUnmerged: error.isNotFullyMerged))
+            }
+        }
+        return result
+    }
+}
+
+/// What a bulk `git branch -d` did.
+struct BranchDeletionResult: Equatable {
+    struct Skipped: Equatable, Identifiable {
+        var id: String { name }
+        var name: String
+        /// git's error.
+        var reason: String
+        /// `-d` refused because it isn't fully merged, so `-D` is offered.
+        var isUnmerged: Bool
+    }
+
+    var deleted: [String] = []
+    var skipped: [Skipped] = []
 }

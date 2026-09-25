@@ -48,7 +48,7 @@ struct CommandLogView: View {
                         .foregroundStyle(.tertiary)
                     Text(entry.exitCode == nil && !entry.failed ? "#" : "$")
                         .foregroundStyle(.secondary)
-                    Text(entry.command)
+                    command
                     if let code = entry.exitCode, code != 0 {
                         Text("exit \(code)").foregroundStyle(.red)
                     } else if entry.failed {
@@ -64,6 +64,19 @@ struct CommandLogView: View {
                 }
             }
             .font(.caption.monospaced())
+        }
+
+        /// git commands colored by word role; notes as plain text.
+        private var command: Text {
+            guard !entry.tokens.isEmpty else { return Text(entry.command) }
+            var text = AttributedString()
+            for (index, token) in entry.tokens.enumerated() {
+                if index > 0 { text += AttributedString(" ") }
+                var word = AttributedString(token.text)
+                word.foregroundColor = GitColors.command(token.role)
+                text += word
+            }
+            return Text(text)
         }
     }
 }

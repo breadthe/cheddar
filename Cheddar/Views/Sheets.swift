@@ -7,6 +7,8 @@ struct SheetScaffold<Fields: View>: View {
     let actionTitle: String
     var destructive = false
     var canSubmit = true
+    /// false when the action switches the sheet to a result view instead of closing it.
+    var dismissesOnSuccess = true
     let action: () async throws -> Void
     @ViewBuilder let fields: () -> Fields
 
@@ -51,7 +53,7 @@ struct SheetScaffold<Fields: View>: View {
         error = nil
         do {
             try await action()
-            dismiss()
+            if dismissesOnSuccess { dismiss() }
         } catch {
             self.error = error.localizedDescription
         }
@@ -426,6 +428,129 @@ struct DeleteWorktreeSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Delete branches
+
+/// Delete Selected… in Branches: confirms the checked branches, runs `-d` on each, then turns into a summary
+/// where each skipped (unmerged) branch can still be force-deleted.
+struct DeleteBranchesSheet: View {
+    let model: ProjectModel
+    let branches: [Branch]
+    let trunk: String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var result: BranchDeletionResult?
+    @State private var forceDelete: String?
+    @State private var error: String?
+
+    var body: some View {
+        if let result {
+            summary(result)
+        } else {
+            SheetScaffold(
+                title: "Delete Branches",
+                actionTitle: branches.count == 1 ? "Delete Branch" : "Delete \(branches.count) Branches",
+                destructive: true,
+                dismissesOnSuccess: false
+            ) {
+                result = try await model.deleteBranches(branches.map(\.name))
+            } fields: {
+                Section {
+                    ForEach(branches) { branch in
+                        LabeledContent {
+                            Text(details(of: branch)).foregroundStyle(.secondary)
+                        } label: {
+                            Text(branch.name).monospaced()
+                        }
+                    }
+                } header: {
+                    Text("Delete \(branches.count == 1 ? "this branch" : "these \(branches.count) branches")?")
+                } footer: {
+                    Text("Each is deleted with git branch -d. Branches that aren't fully merged are skipped; you can force-delete them afterwards.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// Merged into trunk or not, and pushed (has an upstream) or local only.
+    private func details(of branch: Branch) -> String {
+        let merged = trunk.map { branch.isMerged ? "merged into \($0)" : "not merged into \($0)" }
+        let upstream = branch.upstream.map { branch.upstreamGone ? "\($0) gone" : "tracks \($0)" } ?? "local only"
+        return [merged, upstream].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private func summary(_ result: BranchDeletionResult) -> some View {
+        VStack(spacing: 0) {
+            Form {
+                if !result.deleted.isEmpty {
+                    Section("Deleted (\(result.deleted.count))") {
+                        ForEach(result.deleted, id: \.self) { name in
+                            Label { Text(name).monospaced() } icon: {
+                                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !result.skipped.isEmpty {
+                    Section {
+                        ForEach(result.skipped) { skipped in
+                            HStack(alignment: .firstTextBaseline) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(skipped.name).monospaced()
+                                    Text(skipped.reason)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                if skipped.isUnmerged {
+                                    Button("Force Delete (-D)…") { forceDelete = skipped.name }
+                                        .disabled(model.isBusy)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Skipped (\(result.skipped.count))")
+                    }
+                }
+                if let error {
+                    Section {
+                        Label {
+                            Text(error).textSelection(.enabled)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle").foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            HStack {
+                if model.isBusy { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding([.horizontal, .bottom], 20)
+        }
+        .frame(width: 480)
+        .navigationTitle("Deleted Branches")
+        .unmergedBranchConfirmation($forceDelete) { name in
+            await force(name)
+        }
+    }
+
+    private func force(_ name: String) async {
+        error = nil
+        do {
+            try await model.forceDeleteBranch(name)
+            result?.skipped.removeAll { $0.name == name }
+            result?.deleted.append(name)
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

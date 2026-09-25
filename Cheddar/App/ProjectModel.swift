@@ -5,6 +5,8 @@ enum ProjectSheet: Identifiable {
     /// `existingBranch` preselects "Existing branch" (from a branch row's **+ Worktree**).
     case newWorktree(existingBranch: String?)
     case newBranch(base: String?)
+    /// Delete Selected… in Branches.
+    case deleteBranches([Branch])
     case rename(RenameRequest)
     case deleteWorktree(Worktree, changes: [String])
     case handoff(HandoffPreflight)
@@ -17,6 +19,7 @@ enum ProjectSheet: Identifiable {
         switch self {
         case .newWorktree(let branch): "new-worktree-\(branch ?? "")"
         case .newBranch(let base): "new-branch-\(base ?? "")"
+        case .deleteBranches: "delete-branches"
         case .rename(let request): "rename-\(request.id)"
         case .deleteWorktree(let worktree, _): "delete-\(worktree.path)"
         case .handoff(let preflight): "handoff-\(preflight.worktree.path)"
@@ -329,6 +332,28 @@ final class ProjectModel {
         } catch {
             report(error, title: "Couldn't delete \(name)")
         }
+    }
+
+    /// Branches checked for Delete Selected…. Kept here, not in the view, so the batch can clear them.
+    var checkedBranches: Set<String> = []
+
+    /// The checked branches that can still be deleted: they exist and aren't checked out anywhere.
+    var branchesToDelete: [Branch] {
+        guard let snapshot else { return [] }
+        return snapshot.branches.filter { checkedBranches.contains($0.name) && snapshot.worktree(checkingOut: $0.name) == nil }
+    }
+
+    /// `-d` on each branch as one mutation; unmerged ones are skipped, and the result says which.
+    func deleteBranches(_ names: [String]) async throws -> BranchDeletionResult {
+        var result = BranchDeletionResult()
+        try await mutate { result = try await service.deleteBranches(names, in: repo) }
+        checkedBranches = []
+        return result
+    }
+
+    /// `-D` for a branch the bulk delete skipped. Throws, so the summary sheet can show why it failed.
+    func forceDeleteBranch(_ name: String) async throws {
+        try await mutate { try await service.deleteBranch(name, force: true, in: repo) }
     }
 
     // MARK: Remotes
