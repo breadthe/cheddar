@@ -15,6 +15,8 @@ struct RepoSnapshot {
     var remoteBranches: [RemoteBranch] = []
     /// When this repo last fetched, from any worktree. nil if it never has.
     var lastFetch: Date?
+    /// Local tags, newest first.
+    var tags: [Tag] = []
 
     var mainWorktree: Worktree? { worktrees.first { $0.origin == .main } }
 
@@ -54,6 +56,7 @@ struct GitService {
         async let trunkName = trunk(in: repo)
         async let remoteNames = remotes(in: repo)
         async let common = commonDir(of: repo)
+        async let tagList = tags(in: repo)
         var worktrees = try await worktrees(in: repo)
         let orphans = try await orphanFolders(in: repo, listed: worktrees)
         async let unexcluded = unexcludedRoots(in: repo, worktrees: worktrees, orphans: orphans)
@@ -66,7 +69,8 @@ struct GitService {
             orphans: orphans, unexcludedRoots: unexcluded,
             remotes: remotes,
             remoteBranches: remoteBranches(in: repo, remotes: remotes),
-            lastFetch: Self.lastFetch(commonDir: common)
+            lastFetch: Self.lastFetch(commonDir: common),
+            tags: tagList
         )
     }
 

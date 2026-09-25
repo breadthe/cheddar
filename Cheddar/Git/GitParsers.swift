@@ -92,6 +92,38 @@ enum GitParsers {
         return (String(rest[..<slash]), String(rest[rest.index(after: slash)...]))
     }
 
+    /// Same separators as `branchFormat`.
+    static let tagFormat = [
+        "%(refname)", "%(objectname)", "%(objecttype)", "%(creatordate:unix)", "%(contents:subject)",
+    ].joined(separator: "%1f") + "%1e"
+
+    /// Parses `git for-each-ref refs/tags --format=<tagFormat>`.
+    static func tags(_ output: String) -> [Tag] {
+        output.split(separator: "\u{1e}").compactMap { record in
+            let fields = record.drop { $0 == "\n" }.split(separator: "\u{1f}", omittingEmptySubsequences: false).map(String.init)
+            guard fields.count == 5, fields[0].hasPrefix("refs/tags/") else { return nil }
+            return Tag(
+                name: String(fields[0].dropFirst("refs/tags/".count)),
+                sha: fields[1],
+                isAnnotated: fields[2] == "tag",
+                date: TimeInterval(fields[3]).map(Date.init(timeIntervalSince1970:)),
+                subject: fields[4]
+            )
+        }
+    }
+
+    /// Parses `git ls-remote --tags <remote>` into tag name → object. The peeled `^{}` lines are skipped:
+    /// the tag's own object is what local tags are compared by.
+    static func lsRemoteTags(_ output: String) -> [String: String] {
+        var tags: [String: String] = [:]
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            guard parts.count == 2, parts[1].hasPrefix("refs/tags/"), !parts[1].hasSuffix("^{}") else { continue }
+            tags[String(parts[1].dropFirst("refs/tags/".count))] = parts[0]
+        }
+        return tags
+    }
+
     static func shortBranchName(_ ref: String) -> String {
         ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
     }

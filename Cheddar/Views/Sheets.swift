@@ -251,6 +251,59 @@ struct TrackingBranchSheet: View {
     }
 }
 
+/// Renames a local tag. A tag on a remote keeps its old name there.
+struct RenameTagSheet: View {
+    let model: ProjectModel
+    let tag: Tag
+    /// nil when no Fetch this session has checked the remotes.
+    let onRemotes: [String]?
+    let hasRemotes: Bool
+
+    @State private var newName: String
+
+    init(model: ProjectModel, tag: Tag, onRemotes: [String]?, hasRemotes: Bool) {
+        self.model = model
+        self.tag = tag
+        self.onRemotes = onRemotes
+        self.hasRemotes = hasRemotes
+        _newName = State(initialValue: tag.name)
+    }
+
+    var body: some View {
+        SheetScaffold(title: "Rename Tag", actionTitle: "Rename", canSubmit: !newName.isEmpty && newName != tag.name) {
+            try await model.renameTag(tag, to: newName)
+        } fields: {
+            Section {
+                LabeledContent("Tag") { Text(tag.name).monospaced() }
+                TextField("New name", text: $newName).monospaced()
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    if tag.isAnnotated {
+                        note("\(tag.name) is annotated. The new tag keeps its message, but gets you as the tagger and today's date. A signature isn't kept.")
+                    }
+                    if let remotesNote {
+                        note(remotesNote)
+                    }
+                }
+            }
+        }
+    }
+
+    private var remotesNote: String? {
+        let steps = "To rename it there too, push the new tag, then delete \(tag.name) on the remote."
+        if let onRemotes {
+            guard !onRemotes.isEmpty else { return nil }
+            return "\(tag.name) is also on \(onRemotes.joined(separator: ", ")). Only your local tag is renamed, and a later fetch can bring \(tag.name) back. \(steps)"
+        }
+        guard hasRemotes else { return nil }
+        return "Only your local tag is renamed. If \(tag.name) was pushed, the remote keeps it, and a later fetch can bring it back. \(steps)"
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.secondary)
+    }
+}
+
 // MARK: - Rename
 
 struct RenameSheet: View {

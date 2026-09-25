@@ -15,8 +15,12 @@ enum GitColors {
     static let remoteBranch = Color.red
     /// `color.decorate.HEAD` (detached HEAD)
     static let head = Color.cyan
-    /// `color.diff.commit`: yellow, darkened to orange in light mode so it stays readable.
-    static let sha = Color(nsColor: NSColor(name: nil) { appearance in
+    /// `color.diff.commit`
+    static let sha = yellow
+    /// `color.decorate.tag`
+    static let tag = yellow
+    /// Yellow, darkened to orange in light mode so it stays readable.
+    private static let yellow = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .systemYellow : .systemOrange
     })
 

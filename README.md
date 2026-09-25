@@ -61,7 +61,7 @@ Quit any other copy of Cheddar first: both share an app ID, so `open` may just b
 scripts/make-demo.sh
 ```
 
-This creates three repos in `demo/` (gitignored) with worktrees and branches in every state Cheddar shows: dirty and conflicted worktrees, ahead/behind, merged and gone branches, and missing, orphaned, locked and external worktrees. It's handy for screenshots. Add them with **+ Add Project**. Running the script again rebuilds them from scratch.
+This creates three repos in `demo/` (gitignored) with worktrees and branches in every state Cheddar shows: dirty and conflicted worktrees, ahead/behind, merged and gone branches, missing, orphaned, locked and external worktrees, remote branches, and tags in every state (click Fetch to compare them with the demo's origin). It's handy for screenshots. Add them with **+ Add Project**. Running the script again rebuilds them from scratch.
 
 ## App icon
 

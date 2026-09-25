@@ -4,7 +4,8 @@
 #
 #   storefront    Cheddar, Claude Code and Codex worktrees; dirty changes; ahead/behind trunk and upstream;
 #                 a merged branch; a missing worktree (Prune); teammates' remote-only branches and a
-#                 same-name branch pushed without an upstream (Remote Branches)
+#                 same-name branch pushed without an upstream (Remote Branches); tags in every state
+#                 (click Fetch in Cheddar to compare them with origin)
 #   payments-api  a merge conflict; an upstream that's gone; a moved Claude worktree (orphaned, Repair);
 #                 the ".claude/worktrees/ shows as untracked" offer
 #   mobile-app    trunk "develop" (from origin/HEAD); two Codex worktrees; an external worktree;
@@ -142,6 +143,25 @@ remote_only feat/gift-cards 28 "Gift card balance endpoint" app/GiftCards/Balanc
 remote_only dependabot/composer/stripe-php-16 50 "Bump stripe/stripe-php to 16.2" composer.lock "stripe 16.2"
 git push -q origin spike/graphql
 git fetch -q origin
+
+# Tags: releases on origin (annotated and lightweight), an unpushed release candidate, "nightly" pointing
+# somewhere else on origin, and a teammate's tag that's only on origin (on a commit no branch reaches, so
+# fetch doesn't bring it along).
+git tag v2.3.0 release/2.4~1
+GIT_COMMITTER_DATE="@$((NOW - 200 * 3600)) +0000" git tag -a v2.4.0 -m "Release 2.4.0" release/2.4
+git push -q origin v2.3.0 v2.4.0
+git push -q origin main~1:refs/tags/nightly
+git tag nightly main
+GIT_COMMITTER_DATE="@$((NOW - 6 * 3600)) +0000" git tag -a v2.5.0-rc1 -m "Release candidate 1" main
+git clone -q -b main "$DEMO/.remotes/storefront.git" "$DEMO/.teammate"
+(
+  cd "$DEMO/.teammate"
+  git checkout -q --detach
+  change 16 "Try a new price formatter" app/Support/Money.php "<?php // formatter"
+  git tag experiment/price-format
+  git push -q origin refs/tags/experiment/price-format
+)
+rm -rf "$DEMO/.teammate"
 
 # Missing worktree: git lists it, its folder is gone (shows Prune).
 git worktree add -q -b feat/wishlist .cheddar/worktrees/feat-wishlist

@@ -11,7 +11,7 @@ struct GitError: LocalizedError {
     var errorDescription: String? {
         if timedOut { return "git \(arguments.first ?? "") didn't finish within \(Int(GitRunner.networkTimeout)) seconds, so Cheddar stopped it." }
         if isStaleLease {
-            return "The branch changed on the remote since your last fetch, so Cheddar left it alone. Fetch, check what changed, then try again."
+            return "It changed on the remote since your last fetch, so Cheddar left it alone. Fetch, check what changed, then try again."
         }
         let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "git \(arguments.joined(separator: " ")) failed (exit \(exitCode))" : message

@@ -10,7 +10,8 @@ struct ProjectView: View {
     @AppStorage(PreferenceKey.editorApp) private var editorID = OpenIn.defaultEditorID
     @AppStorage(PreferenceKey.terminalApp) private var terminalID = OpenIn.terminal.bundleID
     /// `w:<path>`, `o:<path>` (orphan), `b:<branch>`, `rt:<branch>:<remote ref>` (the remote branch a local
-    /// branch tracks, shown under it) or `r:<remote ref>` (in Remote Branches). `:` can't occur in ref names.
+    /// branch tracks, shown under it), `r:<remote ref>` (in Remote Branches) or `g:<tag>`. `:` can't occur
+    /// in ref names.
     @State private var selection: String?
     /// Hovering a branch highlights its worktree and vice versa.
     @State private var hoveredBranch: String?
@@ -20,6 +21,7 @@ struct ProjectView: View {
     @State private var searchText = ""
     /// A missing app or tool picked from an Open menu; shown as a popover on that row.
     @State private var installHelp: InstallHelpRequest?
+    @AppStorage("showTags") private var showTags = true
 
 
     private var editor: ExternalApp { OpenIn.editor(for: editorID) }
@@ -103,6 +105,7 @@ struct ProjectView: View {
                 if !snapshot.remotes.isEmpty {
                     remoteBranchesSection(snapshot)
                 }
+                tagsSection(snapshot)
             }
             .contextMenu(forSelectionType: String.self) { tags in
                 if tags.count == 1, let tag = tags.first { actions(for: tag, snapshot: snapshot) }
@@ -242,6 +245,92 @@ struct ProjectView: View {
         }
     }
 
+    /// Collapsible, since repos can have hundreds of tags; a search shows matches either way.
+    private func tagsSection(_ snapshot: RepoSnapshot) -> some View {
+        let entries = model.tagEntries
+        return Section {
+            if showTags || !searchText.isEmpty {
+                ForEach(entries.filter { matches($0.name) }) { entry in
+                    tagRow(entry, remotes: snapshot.remotes)
+                }
+                if entries.isEmpty {
+                    Text("No tags.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            HStack {
+                Button {
+                    showTags.toggle()
+                } label: {
+                    Label("Tags", systemImage: showTags ? "chevron.down" : "chevron.right")
+                        .labelStyle(TrailingChevronLabelStyle())
+                }
+                .buttonStyle(.plain)
+                .help(showTags ? "Hide tags" : "Show tags")
+                .accessibilityLabel(showTags ? "Hide Tags" : "Show Tags")
+                Spacer()
+                if !snapshot.remotes.isEmpty {
+                    Text(model.remoteTags == nil
+                         ? "fetch to compare with \(snapshot.remotes.joined(separator: ", "))"
+                         : "compared with \(snapshot.remotes.joined(separator: ", ")) at the last fetch")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func tagRow(_ entry: TagEntry, remotes: [String]) -> some View {
+        let tag = "g:\(entry.name)"
+        return HStack {
+            TagRow(entry: entry)
+            if let local = entry.local, let status = entry.status, status.on.isEmpty, status.differsOn.isEmpty,
+               status.missingFrom.count == 1, let remote = status.missingFrom.first {
+                hoverButton("Push", tag: tag, help: "Push \(entry.name) to \(remote)") {
+                    Task { await model.pushTag(local, to: remote) }
+                }
+            } else if entry.local == nil, let remote = entry.status?.on.first {
+                hoverButton("Fetch", tag: tag, help: "Fetch \(entry.name) from \(remote)") {
+                    Task { await model.fetchTag(entry.name, from: remote) }
+                }
+            }
+            rowMenu(tag) { tagActions(entry, remotes: remotes) }
+        }
+        .tag(tag)
+        .onHover { hover(tag, branch: nil, $0) }
+    }
+
+    @ViewBuilder
+    private func tagActions(_ entry: TagEntry, remotes: [String]) -> some View {
+        let status = entry.status
+        Group {
+            if let local = entry.local {
+                ForEach(status?.missingFrom ?? [], id: \.self) { remote in
+                    Button("Push to \(remote)") { Task { await model.pushTag(local, to: remote) } }
+                }
+                Button("Rename…") {
+                    model.sheet = .renameTag(local, onRemotes: status.map { $0.on + $0.differsOn })
+                }
+                Divider()
+                Button("Delete…", role: .destructive) { model.tagToDelete = local }
+            } else {
+                ForEach(status?.on ?? [], id: \.self) { remote in
+                    Button("Fetch from \(remote)") { Task { await model.fetchTag(entry.name, from: remote) } }
+                }
+                Divider()
+            }
+            ForEach((status?.on ?? []) + (status?.differsOn ?? []), id: \.self) { remote in
+                if let sha = status?.remoteObjects[remote] {
+                    Button("Delete on \(remote)…", role: .destructive) {
+                        model.remoteTagToDelete = RemoteTagRef(name: entry.name, remote: remote, sha: sha)
+                    }
+                }
+            }
+        }
+        .disabled(model.isBusy)
+    }
+
     private func fetchedDescription(_ date: Date?) -> String {
         date.map { "fetched \($0.formatted(.relative(presentation: .named)))" } ?? "never fetched"
     }
@@ -356,6 +445,8 @@ struct ProjectView: View {
             branchActions(branch, checkout: snapshot.worktree(checkingOut: branch.name))
         } else if let remote = remoteBranch(for: tag) {
             remoteActions(remote, tracked: tag.hasPrefix("rt:"))
+        } else if tag.hasPrefix("g:"), let entry = model.tagEntries.first(where: { "g:\($0.name)" == tag }) {
+            tagActions(entry, remotes: snapshot.remotes)
         }
     }
 
@@ -528,6 +619,8 @@ struct ProjectView: View {
             AdoptSheet(model: model, worktree: worktree)
         case .trackRemote(let remote):
             TrackingBranchSheet(model: model, remote: remote)
+        case .renameTag(let tag, let onRemotes):
+            RenameTagSheet(model: model, tag: tag, onRemotes: onRemotes, hasRemotes: !snapshot.remotes.isEmpty)
         }
     }
 
@@ -574,6 +667,10 @@ struct ProjectView: View {
         }
         if let remote = selection.flatMap(remoteBranch(for:)) {
             return { model.remoteBranchToDelete = remote }
+        }
+        if let selection, selection.hasPrefix("g:"),
+           let tag = model.snapshot?.tags.first(where: { "g:\($0.name)" == selection }) {
+            return { model.tagToDelete = tag }
         }
         guard let selection, selection.hasPrefix("b:"), let snapshot = model.snapshot,
               let branch = snapshot.branches.first(where: { "b:\($0.name)" == selection }),
@@ -669,6 +766,28 @@ private struct Confirmations: ViewModifier {
                 Text(deleteRemoteMessage(remote))
             }
             .confirmationDialog(
+                "Delete tag \(model.tagToDelete?.name ?? "")?",
+                isPresented: isPresented($model.tagToDelete),
+                presenting: model.tagToDelete
+            ) { tag in
+                Button("Delete", role: .destructive) {
+                    Task { await model.deleteTag(tag) }
+                }
+            } message: { tag in
+                Text(deleteTagMessage(tag))
+            }
+            .confirmationDialog(
+                "Delete tag \(model.remoteTagToDelete?.name ?? "") on \(model.remoteTagToDelete?.remote ?? "the remote")?",
+                isPresented: isPresented($model.remoteTagToDelete),
+                presenting: model.remoteTagToDelete
+            ) { ref in
+                Button("Delete on \(ref.remote)", role: .destructive) {
+                    Task { await model.deleteRemoteTag(ref) }
+                }
+            } message: { ref in
+                Text("This deletes the tag on \(ref.remote) for everyone. Clones that already fetched it keep it.\n\nCheddar only deletes it if it still points at \(ref.sha.prefix(7)), as of your last fetch.")
+            }
+            .confirmationDialog(
                 "Move \(model.orphanToTrash?.displayName ?? "") to the Trash?",
                 isPresented: isPresented($model.orphanToTrash),
                 presenting: model.orphanToTrash
@@ -693,7 +812,24 @@ private struct Confirmations: ViewModifier {
         return lines.joined(separator: "\n\n")
     }
 
+    private func deleteTagMessage(_ tag: Tag) -> String {
+        let entry = model.tagEntries.first { $0.name == tag.name }
+        let remotes = entry?.status.map { $0.on + $0.differsOn } ?? []
+        guard !remotes.isEmpty else { return "Only the tag is deleted; the commit it points at isn't affected." }
+        return "Only your local tag is deleted. It's still on \(remotes.joined(separator: ", ")), and a later fetch can bring it back; use Delete on \(remotes[0]) to remove it there."
+    }
+
     private func isPresented<T>(_ item: Binding<T?>) -> Binding<Bool> {
         Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
+}
+
+/// "Tags ⌄": the title, then the chevron.
+private struct TrailingChevronLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.title
+            configuration.icon.imageScale(.small).foregroundStyle(.secondary)
+        }
     }
 }

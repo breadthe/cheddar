@@ -10,6 +10,8 @@ enum ProjectSheet: Identifiable {
     case handoff(HandoffPreflight)
     case adopt(Worktree)
     case trackRemote(RemoteBranch)
+    /// `onRemotes`: the remotes that have it, or nil when no Fetch this session has checked.
+    case renameTag(Tag, onRemotes: [String]?)
 
     var id: String {
         switch self {
@@ -20,6 +22,7 @@ enum ProjectSheet: Identifiable {
         case .handoff(let preflight): "handoff-\(preflight.worktree.path)"
         case .adopt(let worktree): "adopt-\(worktree.path)"
         case .trackRemote(let remote): "track-\(remote.ref)"
+        case .renameTag(let tag, _): "rename-tag-\(tag.name)"
         }
     }
 }
@@ -37,6 +40,14 @@ enum RenameRequest: Identifiable {
         case .folder(let worktree): "folder-\(worktree.path)"
         }
     }
+}
+
+/// A tag on one remote, as the last Fetch saw it.
+struct RemoteTagRef: Identifiable, Hashable {
+    var id: String { "\(remote)/\(name)" }
+    var name: String
+    var remote: String
+    var sha: String
 }
 
 /// One project's repo state and the operations on it. Runs one mutation at a time and refreshes after each.
@@ -59,6 +70,14 @@ final class ProjectModel {
     var unmergedBranch: String?
     /// Asks before deleting a branch on its remote.
     var remoteBranchToDelete: RemoteBranch?
+    var tagToDelete: Tag?
+    var remoteTagToDelete: RemoteTagRef?
+    /// Each remote's tags as of the last Fetch this session; nil before one. Kept in `remoteTagCache` too,
+    /// so switching projects doesn't lose it.
+    private(set) var remoteTags: RemoteTags? {
+        didSet { remoteTagCache.byProject[project.path] = remoteTags }
+    }
+    @ObservationIgnored private let remoteTagCache: RemoteTagCache
     /// Asks before moving an orphaned folder to the Trash.
     var orphanToTrash: OrphanFolder?
     /// Exclude offers the user chose "Not Now" for, this session.
@@ -85,9 +104,17 @@ final class ProjectModel {
     @ObservationIgnored private var pendingSince: Date?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
 
-    init(project: Project, service: GitService) {
+    init(project: Project, service: GitService, remoteTagCache: RemoteTagCache = RemoteTagCache()) {
         self.project = project
         self.service = service
+        self.remoteTagCache = remoteTagCache
+        remoteTags = remoteTagCache.byProject[project.path]
+    }
+
+    /// The Tags section's rows: local tags compared with `remoteTags`, plus tags only on remotes.
+    var tagEntries: [TagEntry] {
+        guard let snapshot else { return [] }
+        return TagEntry.entries(local: snapshot.tags, remoteTags: remoteTags, remotes: snapshot.remotes)
     }
 
     /// Loads the whole snapshot. Overlapping requests are coalesced into one more pass.
@@ -306,9 +333,13 @@ final class ProjectModel {
 
     // MARK: Remotes
 
-    /// Fetches every remote (with prune). Runs as a mutation: one at a time, then a refresh.
+    /// Fetches every remote (with prune), then lists each remote's tags. Runs as a mutation: one at a time,
+    /// then a refresh.
     func fetch() async {
-        await runNetwork("Couldn't fetch") { try await service.fetch(in: repo) }
+        await runNetwork("Couldn't fetch") {
+            try await service.fetch(in: repo)
+            remoteTags = try await service.remoteTags(in: repo)
+        }
     }
 
     func deleteRemoteBranch(_ remote: RemoteBranch) async {
@@ -318,6 +349,40 @@ final class ProjectModel {
     func createTrackingBranch(_ name: String, from remote: RemoteBranch) async throws {
         try await validateBranchName(name)
         try await mutate { try await service.createTrackingBranch(name, from: remote, in: repo) }
+    }
+
+    // MARK: Tags
+
+    func deleteTag(_ tag: Tag) async {
+        await run("Couldn't delete tag \(tag.name)") { try await service.deleteTag(tag.name, in: repo) }
+    }
+
+    func renameTag(_ tag: Tag, to newName: String) async throws {
+        guard newName != tag.name else { return }
+        guard try await service.isValidTagName(newName, in: repo) else {
+            throw OperationError(errorDescription: "“\(newName)” isn't a valid tag name.")
+        }
+        try await mutate { try await service.renameTag(tag, to: newName, in: repo) }
+    }
+
+    func pushTag(_ tag: Tag, to remote: String) async {
+        await runNetwork("Couldn't push tag \(tag.name) to \(remote)") {
+            try await service.pushTag(tag.name, to: remote, in: repo)
+            remoteTags?[remote]?[tag.name] = tag.sha
+        }
+    }
+
+    func fetchTag(_ name: String, from remote: String) async {
+        await runNetwork("Couldn't fetch tag \(name) from \(remote)") {
+            try await service.fetchTag(name, from: remote, in: repo)
+        }
+    }
+
+    func deleteRemoteTag(_ ref: RemoteTagRef) async {
+        await runNetwork("Couldn't delete tag \(ref.name) on \(ref.remote)") {
+            try await service.deleteRemoteTag(ref.name, expecting: ref.sha, on: ref.remote, in: repo)
+            remoteTags?[ref.remote]?[ref.name] = nil
+        }
     }
 
     /// A mutation that talks to a remote: failures become an alert, with advice when git needed credentials.

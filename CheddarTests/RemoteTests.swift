@@ -146,7 +146,7 @@ final class RemoteTests: XCTestCase {
             XCTFail("deleted a branch with commits we haven't fetched")
         } catch let error as GitError {
             XCTAssertTrue(error.isStaleLease)
-            XCTAssertTrue(error.localizedDescription.hasPrefix("The branch changed on the remote since your last fetch"))
+            XCTAssertTrue(error.localizedDescription.hasPrefix("It changed on the remote since your last fetch"))
         }
         let remoteStillHasIt = try await remoteHas("feat/x")
         XCTAssertTrue(remoteStillHasIt)

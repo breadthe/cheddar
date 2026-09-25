@@ -10,6 +10,7 @@ struct RootView: View {
     @AppStorage(PreferenceKey.extraDiscoveryLocations) private var extraLocations = Data()
     /// The selected project's model; replaced when the project or anything its service depends on changes.
     @State private var model: ProjectModel?
+    @State private var remoteTagCache = RemoteTagCache()
 
     var body: some View {
         @Bindable var appState = appState
@@ -84,7 +85,7 @@ struct RootView: View {
             model = nil
             return
         }
-        model = ProjectModel(project: project, service: service(for: project, git: git))
+        model = ProjectModel(project: project, service: service(for: project, git: git), remoteTagCache: remoteTagCache)
     }
 
     private func service(for project: Project, git: GitRunner) -> GitService {
