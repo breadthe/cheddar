@@ -5,6 +5,8 @@
 
 A small native macOS app for managing **git worktrees** and **branches**. It shows every worktree of a repo, including ones made by Claude Code, Codex and other tools, and lets you create, rename, delete and hand off worktrees and branches. It runs locally only: no App Store, no notarization, no Apple developer account. Build it yourself.
 
+See the [user manual](MANUAL.md) for everything the app can do.
+
 ## Requirements
 
 - macOS 14 or later
