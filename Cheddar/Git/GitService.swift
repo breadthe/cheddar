@@ -9,11 +9,30 @@ struct RepoSnapshot {
     var orphans: [OrphanFolder] = []
     /// Exclude patterns Cheddar offers to add (discovery roots showing as untracked in the main checkout).
     var unexcludedRoots: [String] = []
+    /// From `git remote`.
+    var remotes: [String] = []
+    /// Remote-tracking branches, sorted by ref (so grouped by remote).
+    var remoteBranches: [RemoteBranch] = []
+    /// When this repo last fetched, from any worktree. nil if it never has.
+    var lastFetch: Date?
 
     var mainWorktree: Worktree? { worktrees.first { $0.origin == .main } }
 
     func worktree(checkingOut branch: String) -> Worktree? {
         worktrees.first { $0.branch == branch }
+    }
+
+    /// The remote branch this branch tracks, if its upstream is a remote branch that exists locally
+    /// (a `[gone]` upstream has none). Linked by the configured upstream only, never by a matching name.
+    func trackedRemote(of branch: Branch) -> RemoteBranch? {
+        guard let ref = branch.upstreamRef else { return nil }
+        return remoteBranches.first { $0.ref == ref }
+    }
+
+    /// Remote branches that no local branch tracks.
+    var untrackedRemoteBranches: [RemoteBranch] {
+        let tracked = Set(branches.compactMap(\.upstreamRef))
+        return remoteBranches.filter { !tracked.contains($0.ref) }
     }
 }
 
@@ -33,15 +52,21 @@ struct GitService {
     func snapshot(of repo: URL) async throws -> RepoSnapshot {
         async let branchList = branches(in: repo)
         async let trunkName = trunk(in: repo)
+        async let remoteNames = remotes(in: repo)
+        async let common = commonDir(of: repo)
         var worktrees = try await worktrees(in: repo)
         let orphans = try await orphanFolders(in: repo, listed: worktrees)
         async let unexcluded = unexcludedRoots(in: repo, worktrees: worktrees, orphans: orphans)
         let trunk = try await trunkName
         var branches = try await branchList
         try await addStatus(to: &worktrees, branches: &branches, trunk: trunk, in: repo)
+        let remotes = try await remoteNames
         return try await RepoSnapshot(
             trunk: trunk, worktrees: worktrees, branches: branches,
-            orphans: orphans, unexcludedRoots: unexcluded
+            orphans: orphans, unexcludedRoots: unexcluded,
+            remotes: remotes,
+            remoteBranches: remoteBranches(in: repo, remotes: remotes),
+            lastFetch: Self.lastFetch(commonDir: common)
         )
     }
 

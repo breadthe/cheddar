@@ -47,6 +47,14 @@ xcodebuild -scheme Cheddar test
 
 The git tests create throwaway repos in a temp folder and run real git commands.
 
+Testing also builds a Debug copy of the app, which you can launch to try a change without a Release build or install. It goes to Xcode's DerivedData folder, whose path differs per machine; `xcodebuild` prints it:
+
+```sh
+open "$(xcodebuild -scheme Cheddar -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2}')/Cheddar.app"
+```
+
+Quit any other copy of Cheddar first: both share an app ID, so `open` may just bring the running one to the front. The Debug copy uses the same projects and settings.
+
 ## Demo repos
 
 ```sh

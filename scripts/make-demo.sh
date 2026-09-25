@@ -3,7 +3,8 @@
 # for screenshots. Re-running it deletes and rebuilds ./demo. Add the repos in Cheddar with + Add Project.
 #
 #   storefront    Cheddar, Claude Code and Codex worktrees; dirty changes; ahead/behind trunk and upstream;
-#                 a merged branch; a missing worktree (Prune)
+#                 a merged branch; a missing worktree (Prune); teammates' remote-only branches and a
+#                 same-name branch pushed without an upstream (Remote Branches)
 #   payments-api  a merge conflict; an upstream that's gone; a moved Claude worktree (orphaned, Repair);
 #                 the ".claude/worktrees/ shows as untracked" offer
 #   mobile-app    trunk "develop" (from origin/HEAD); two Codex worktrees; an external worktree;
@@ -32,6 +33,16 @@ NOW=$(date +%s)
 commit() {
   local when="@$((NOW - $1 * 3600)) +0000"
   GIT_AUTHOR_DATE="$when" GIT_COMMITTER_DATE="$when" git commit -q --allow-empty -m "$2"
+}
+
+# remote_only <branch> <hours ago> <message> <file> <line>: a branch that exists only on origin, like a
+# teammate's (committed on top of main, pushed, then the local branch deleted).
+remote_only() {
+  git checkout -q -b "$1" main
+  change "$2" "$3" "$4" "$5"
+  git push -q origin "$1"
+  git checkout -q main
+  git branch -q -D "$1"
 }
 
 # edit <file> <line>: appends a line, creating the file and its folders.
@@ -124,6 +135,13 @@ change 330 "GraphQL schema" graphql/schema.graphql "type Product { id: ID! }"
 change 320 "GraphQL resolvers" graphql/Resolvers.php "<?php // resolvers"
 change 310 "GraphQL playground" graphql/playground.html "<html></html>"
 git checkout -q main
+
+# Remote branches: teammates' branches with no local branch, and spike/graphql pushed without -u
+# (same name as the local branch, but not linked to it).
+remote_only feat/gift-cards 28 "Gift card balance endpoint" app/GiftCards/Balance.php "<?php // balance"
+remote_only dependabot/composer/stripe-php-16 50 "Bump stripe/stripe-php to 16.2" composer.lock "stripe 16.2"
+git push -q origin spike/graphql
+git fetch -q origin
 
 # Missing worktree: git lists it, its folder is gone (shows Prune).
 git worktree add -q -b feat/wishlist .cheddar/worktrees/feat-wishlist

@@ -300,6 +300,22 @@ final class ProjectModel {
         }
     }
 
+    // MARK: Remotes
+
+    /// Fetches every remote (with prune). Runs as a mutation: one at a time, then a refresh.
+    func fetch() async {
+        do {
+            try await mutate { try await service.fetch(in: repo) }
+        } catch let error as GitError where error.needsCredentials {
+            alert = AppAlert(title: "Couldn't fetch", message: error.localizedDescription + "\n\n" + Self.credentialsHelp)
+        } catch {
+            report(error, title: "Couldn't fetch")
+        }
+    }
+
+    static let credentialsHelp = "Cheddar can't answer password, passphrase or host key prompts. "
+        + "Check that `git fetch` works in Terminal without asking for anything, using a credential helper or an SSH agent."
+
     // MARK: Helpers
 
     func report(_ error: Error, title: String) {

@@ -5,14 +5,25 @@ struct GitError: LocalizedError {
     var arguments: [String]
     var exitCode: Int32
     var stderr: String
+    /// Killed after running past its timeout (network commands).
+    var timedOut = false
 
     var errorDescription: String? {
+        if timedOut { return "git \(arguments.first ?? "") didn't finish within \(Int(GitRunner.networkTimeout)) seconds, so Cheddar stopped it." }
         let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "git \(arguments.joined(separator: " ")) failed (exit \(exitCode))" : message
     }
 
     /// `git branch -d` refused because the branch has commits not merged into HEAD or its upstream.
     var isNotFullyMerged: Bool { stderr.contains("not fully merged") }
+
+    /// A remote asked for a password, passphrase or host key confirmation, which Cheddar can't answer
+    /// (`GIT_TERMINAL_PROMPT=0`, no terminal for ssh).
+    var needsCredentials: Bool {
+        ["terminal prompts disabled", "could not read Username", "could not read Password",
+         "Permission denied (publickey", "Host key verification failed", "Authentication failed"]
+            .contains { stderr.contains($0) }
+    }
 }
 
 /// Launching git itself failed because the binary is gone (e.g. uninstalled mid-session).
@@ -28,6 +39,9 @@ struct BareRepositoryError: LocalizedError {
 
 /// Runs git with an argument array, a working directory and a clean environment.
 struct GitRunner: Sendable {
+    /// How long a command that talks to a remote (fetch, push, ls-remote) may run.
+    static let networkTimeout: TimeInterval = 120
+
     let executable: URL
     let environment: [String: String]
     let log: CommandLog?
@@ -51,9 +65,9 @@ struct GitRunner: Sendable {
     }
 
     /// Runs git and returns its output whatever the exit code. Every run goes into the command log.
-    func run(_ arguments: [String], in directory: URL) async throws -> ProcessOutput {
+    func run(_ arguments: [String], in directory: URL, timeout: TimeInterval? = nil) async throws -> ProcessOutput {
         do {
-            let output = try await ProcessRunner.run(executable, arguments, in: directory, environment: environment)
+            let output = try await ProcessRunner.run(executable, arguments, in: directory, environment: environment, timeout: timeout)
             await log?.record(arguments: arguments, directory: directory, result: .success(output))
             return output
         } catch {
@@ -64,10 +78,10 @@ struct GitRunner: Sendable {
 
     /// Runs git and returns stdout, throwing `GitError` on a non-zero exit.
     @discardableResult
-    func output(_ arguments: [String], in directory: URL) async throws -> String {
-        let result = try await run(arguments, in: directory)
+    func output(_ arguments: [String], in directory: URL, timeout: TimeInterval? = nil) async throws -> String {
+        let result = try await run(arguments, in: directory, timeout: timeout)
         guard result.exitCode == 0 else {
-            throw GitError(arguments: arguments, exitCode: result.exitCode, stderr: result.stderrString)
+            throw GitError(arguments: arguments, exitCode: result.exitCode, stderr: result.stderrString, timedOut: result.timedOut)
         }
         return result.stdoutString
     }

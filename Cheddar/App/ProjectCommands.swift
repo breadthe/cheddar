@@ -4,6 +4,8 @@ import SwiftUI
 struct ProjectCommands {
     var isEnabled: Bool
     var refresh: () -> Void
+    /// nil when the project has no remotes.
+    var fetch: (() -> Void)?
     var newWorktree: () -> Void
     /// The preferred editor (Settings → General).
     var editorName: String
@@ -27,6 +29,8 @@ struct ProjectCommandMenus: Commands {
             Button("Refresh") { project?.refresh() }
                 .keyboardShortcut("r")
                 .disabled(project?.isEnabled != true)
+            Button("Fetch All Remotes") { project?.fetch?() }
+                .disabled(project?.isEnabled != true || project?.fetch == nil)
             Button(showLog ? "Hide Command Log" : "Show Command Log") { showLog.toggle() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Divider()

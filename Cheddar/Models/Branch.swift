@@ -7,6 +7,9 @@ struct Branch: Identifiable, Hashable {
     var sha: String
     /// e.g. `origin/main`
     var upstream: String?
+    /// The full upstream ref, e.g. `refs/remotes/origin/main` (or `refs/heads/x` for a local upstream).
+    /// This, not a matching name, is what links a local branch to a remote branch.
+    var upstreamRef: String? = nil
     /// e.g. `[ahead 1, behind 2]` or `[gone]`
     var upstreamTrack: String?
     var lastCommitDate: Date?

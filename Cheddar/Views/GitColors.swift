@@ -11,6 +11,8 @@ enum GitColors {
     static let localBranch = Color.primary
     /// `color.branch.upstream`
     static let upstream = Color.blue
+    /// `color.branch.remote`
+    static let remoteBranch = Color.red
     /// `color.decorate.HEAD` (detached HEAD)
     static let head = Color.cyan
     /// `color.diff.commit`: yellow, darkened to orange in light mode so it stays readable.

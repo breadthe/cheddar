@@ -4,6 +4,8 @@ struct ProcessOutput: Sendable {
     var stdout: Data
     var stderr: Data
     var exitCode: Int32
+    /// The process was terminated because it ran past its timeout.
+    var timedOut = false
 
     var stdoutString: String { String(decoding: stdout, as: UTF8.self) }
     var stderrString: String { String(decoding: stderr, as: UTF8.self) }
@@ -33,6 +35,7 @@ enum ProcessRunner {
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             let exit = try launch(process)
+            let deadline = timeout.map { Date().addingTimeInterval($0) }
             if let timeout {
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                     if process.isRunning { process.terminate() }
@@ -44,7 +47,8 @@ enum ProcessRunner {
             let (outData, errData) = await (out, err)
             await exit.wait()
             try Task.checkCancellation()
-            return ProcessOutput(stdout: outData, stderr: errData, exitCode: process.terminationStatus)
+            let timedOut = process.terminationReason == .uncaughtSignal && deadline.map { Date() >= $0 } == true
+            return ProcessOutput(stdout: outData, stderr: errData, exitCode: process.terminationStatus, timedOut: timedOut)
         } onCancel: {
             if process.isRunning { process.terminate() }
         }

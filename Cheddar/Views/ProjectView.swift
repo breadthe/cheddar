@@ -9,7 +9,8 @@ struct ProjectView: View {
     @AppStorage("showCommandLog") private var showLog = false
     @AppStorage(PreferenceKey.editorApp) private var editorID = OpenIn.defaultEditorID
     @AppStorage(PreferenceKey.terminalApp) private var terminalID = OpenIn.terminal.bundleID
-    /// `w:<path>`, `o:<path>` (orphan) or `b:<branch>`
+    /// `w:<path>`, `o:<path>` (orphan), `b:<branch>`, `rt:<branch>:<remote ref>` (the remote branch a local
+    /// branch tracks, shown under it) or `r:<remote ref>` (in Remote Branches). `:` can't occur in ref names.
     @State private var selection: String?
     /// Hovering a branch highlights its worktree and vice versa.
     @State private var hoveredBranch: String?
@@ -108,8 +109,12 @@ struct ProjectView: View {
                     }
                 }
                 Section {
-                    ForEach(snapshot.branches.filter { matches($0.name) }) { branch in
-                        branchRow(branch, snapshot: snapshot)
+                    ForEach(snapshot.branches.filter { matches($0.name, $0.upstream) }) { branch in
+                        let remote = snapshot.trackedRemote(of: branch)
+                        branchRow(branch, trackedRemote: remote, snapshot: snapshot)
+                        if let remote {
+                            trackedRemoteRow(remote, of: branch)
+                        }
                     }
                 } header: {
                     HStack {
@@ -125,6 +130,9 @@ struct ProjectView: View {
                         .help("New Branch")
                         .accessibilityLabel("New Branch")
                     }
+                }
+                if !snapshot.remotes.isEmpty {
+                    remoteBranchesSection(snapshot)
                 }
             }
             .contextMenu(forSelectionType: String.self) { tags in
@@ -196,11 +204,11 @@ struct ProjectView: View {
         .onHover { hover(tag, branch: nil, $0) }
     }
 
-    private func branchRow(_ branch: Branch, snapshot: RepoSnapshot) -> some View {
+    private func branchRow(_ branch: Branch, trackedRemote: RemoteBranch?, snapshot: RepoSnapshot) -> some View {
         let tag = "b:\(branch.name)"
         let checkout = snapshot.worktree(checkingOut: branch.name)
         return HStack {
-            BranchRow(branch: branch, checkedOutIn: checkout, trunk: snapshot.trunk)
+            BranchRow(branch: branch, checkedOutIn: checkout, trunk: snapshot.trunk, trackedRemote: trackedRemote)
             if checkout == nil {
                 hoverButton("+ Worktree", tag: tag, help: "New worktree on this branch") {
                     model.sheet = .newWorktree(existingBranch: branch.name)
@@ -211,6 +219,53 @@ struct ProjectView: View {
         .tag(tag)
         .onHover { hover(tag, branch: branch.name, $0) }
         .listRowBackground(highlight(branch.name))
+    }
+
+    /// The remote branch `branch` tracks, as its own row under it. Hovering either highlights both.
+    private func trackedRemoteRow(_ remote: RemoteBranch, of branch: Branch) -> some View {
+        let tag = "rt:\(branch.name):\(remote.ref)"
+        return RemoteBranchRow(remote: remote, trackingBranch: branch)
+            .tag(tag)
+            .onHover { hover(tag, branch: branch.name, $0) }
+            .listRowBackground(highlight(branch.name))
+    }
+
+    /// Remote branches no local branch tracks, so each remote branch shows up exactly once.
+    private func remoteBranchesSection(_ snapshot: RepoSnapshot) -> some View {
+        let untracked = snapshot.untrackedRemoteBranches
+        return Section {
+            ForEach(untracked.filter { matches($0.shortName) }) { remote in
+                let tag = "r:\(remote.ref)"
+                RemoteBranchRow(remote: remote)
+                    .tag(tag)
+                    .onHover { hover(tag, branch: nil, $0) }
+            }
+            if untracked.isEmpty {
+                Text("Every remote branch is tracked by a local branch.")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            HStack {
+                Text("Remote Branches")
+                Spacer()
+                Text(fetchedDescription(snapshot.lastFetch))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    Task { await model.fetch() }
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isBusy)
+                .help("Fetch All Remotes")
+                .accessibilityLabel("Fetch All Remotes")
+            }
+        }
+    }
+
+    private func fetchedDescription(_ date: Date?) -> String {
+        date.map { "fetched \($0.formatted(.relative(presentation: .named)))" } ?? "never fetched"
     }
 
     @ToolbarContentBuilder
@@ -243,6 +298,13 @@ struct ProjectView: View {
             }
             .help("New Worktree (⌘N)")
             .disabled(model.snapshot == nil || model.isBusy)
+            Button {
+                Task { await model.fetch() }
+            } label: {
+                Label("Fetch", systemImage: "arrow.down.circle")
+            }
+            .help("Fetch all remotes (\(fetchedDescription(model.snapshot?.lastFetch)))")
+            .disabled(model.snapshot?.remotes.isEmpty != false || model.isBusy)
             Button {
                 Task { await model.load() }
             } label: {
@@ -480,6 +542,7 @@ struct ProjectView: View {
         ProjectCommands(
             isEnabled: model.snapshot != nil && !model.isBusy,
             refresh: { Task { await model.load() } },
+            fetch: model.snapshot?.remotes.isEmpty == false ? { Task { await model.fetch() } } : nil,
             newWorktree: { model.sheet = .newWorktree(existingBranch: nil) },
             editorName: editor.name,
             openInEditor: selectedWorktree.map { worktree in { open(worktree, in: editor, tag: "w:\(worktree.path)") } },

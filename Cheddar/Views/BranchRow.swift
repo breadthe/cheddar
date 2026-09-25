@@ -4,6 +4,8 @@ struct BranchRow: View {
     let branch: Branch
     let checkedOutIn: Worktree?
     let trunk: String?
+    /// The remote branch it tracks. When set, that shows as its own row below, with the upstream counts.
+    var trackedRemote: RemoteBranch?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -21,7 +23,7 @@ struct BranchRow: View {
                     .foregroundStyle(.secondary)
                     .help("Checked out in \(worktree.path)")
             }
-            if let upstream = branch.upstream {
+            if let upstream = branch.upstream, trackedRemote == nil {
                 HStack(spacing: 4) {
                     Text(upstream)
                         .monospaced()
@@ -50,6 +52,49 @@ struct BranchRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             if let date = branch.lastCommitDate {
+                Text(date, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+        }
+    }
+}
+
+/// A remote-tracking branch. Under its local branch (`trackingBranch` set) it's indented, tagged `remote`,
+/// and shows how far the local branch is ahead of or behind it. In Remote Branches it stands alone.
+struct RemoteBranchRow: View {
+    let remote: RemoteBranch
+    var trackingBranch: Branch?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if trackingBranch != nil {
+                Image(systemName: "arrow.turn.down.right")
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 6)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(.secondary)
+            }
+            Text(remote.shortName)
+                .monospaced()
+                .foregroundStyle(GitColors.remoteBranch)
+                .lineLimit(1)
+            if let branch = trackingBranch {
+                TagBadge(text: "remote")
+                    .help("\(branch.name) tracks \(remote.shortName)")
+                AheadBehind(ahead: branch.upstreamAhead, behind: branch.upstreamBehind)
+                    .font(.callout)
+                    .help("\(branch.name) compared with \(remote.shortName), as of the last fetch")
+            }
+            Spacer()
+            Text(remote.subject)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let date = remote.lastCommitDate {
                 Text(date, format: .relative(presentation: .named))
                     .font(.caption)
                     .foregroundStyle(.secondary)
