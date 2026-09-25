@@ -222,6 +222,35 @@ struct NewBranchSheet: View {
     }
 }
 
+/// A local branch that tracks a remote branch no local branch tracks yet.
+struct TrackingBranchSheet: View {
+    let model: ProjectModel
+    let remote: RemoteBranch
+
+    @State private var name: String
+
+    init(model: ProjectModel, remote: RemoteBranch) {
+        self.model = model
+        self.remote = remote
+        _name = State(initialValue: remote.name)
+    }
+
+    var body: some View {
+        SheetScaffold(title: "New Tracking Branch", actionTitle: "Create", canSubmit: !name.isEmpty) {
+            try await model.createTrackingBranch(name, from: remote)
+        } fields: {
+            Section {
+                LabeledContent("Tracks") { Text(remote.shortName).monospaced() }
+                TextField("Name", text: $name).monospaced()
+            } footer: {
+                Text("Creates a local branch at \(remote.shortName), with it as the upstream. Nothing is checked out: use + Worktree on the new branch to work on it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 // MARK: - Rename
 
 struct RenameSheet: View {

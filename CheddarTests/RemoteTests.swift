@@ -103,6 +103,98 @@ final class RemoteTests: XCTestCase {
         XCTAssertNotNil(snapshot.lastFetch)
     }
 
+    // MARK: Delete and track (milestone 8)
+
+    /// A remote with branch `name` pushed from this repo and fetched, plus a second clone to act as a teammate.
+    private func remoteWithTeammate(branch name: String) async throws -> (remote: RemoteBranch, teammate: URL) {
+        let bare = try await addRemote("origin")
+        try await repo.run("push", "-u", "origin", "main")
+        try await repo.run("push", "origin", "main:\(name)")
+        let teammate = repo.root.appendingPathComponent("teammate")
+        try await repo.run("clone", bare.path, teammate.path)
+        try await repo.run("config", "user.name", "Teammate", in: teammate)
+        try await repo.run("config", "user.email", "teammate@cheddar.invalid", in: teammate)
+        let snapshot = try await service.snapshot(of: repo.repo)
+        return (try XCTUnwrap(snapshot.remoteBranches.first { $0.name == name }), teammate)
+    }
+
+    private func remoteHas(_ branch: String) async throws -> Bool {
+        try await !repo.run("ls-remote", "origin", "refs/heads/\(branch)").isEmpty
+    }
+
+    func testDeleteRemoteBranch() async throws {
+        let (remote, _) = try await remoteWithTeammate(branch: "feat/x")
+        try await repo.run("branch", "--track", "x", "origin/feat/x")
+
+        try await service.deleteRemoteBranch(remote, in: repo.repo)
+
+        let remoteStillHasIt = try await remoteHas("feat/x")
+        XCTAssertFalse(remoteStillHasIt)
+        let snapshot = try await service.snapshot(of: repo.repo)
+        XCTAssertFalse(snapshot.remoteBranches.contains { $0.name == "feat/x" })
+        XCTAssertEqual(snapshot.branches.first { $0.name == "x" }?.upstreamGone, true)
+    }
+
+    func testDeleteRefusesWhenTheRemoteBranchMoved() async throws {
+        let (remote, teammate) = try await remoteWithTeammate(branch: "feat/x")
+        try await repo.run("checkout", "-q", "-b", "feat/x", "origin/feat/x", in: teammate)
+        try await repo.run("commit", "--allow-empty", "-m", "teammate's work", in: teammate)
+        try await repo.run("push", "origin", "feat/x", in: teammate)
+
+        do {
+            try await service.deleteRemoteBranch(remote, in: repo.repo)
+            XCTFail("deleted a branch with commits we haven't fetched")
+        } catch let error as GitError {
+            XCTAssertTrue(error.isStaleLease)
+            XCTAssertTrue(error.localizedDescription.hasPrefix("The branch changed on the remote since your last fetch"))
+        }
+        let remoteStillHasIt = try await remoteHas("feat/x")
+        XCTAssertTrue(remoteStillHasIt)
+    }
+
+    func testDeletingABranchAlreadyGoneOnTheRemoteSucceeds() async throws {
+        let (remote, teammate) = try await remoteWithTeammate(branch: "feat/x")
+        try await repo.run("push", "origin", "--delete", "feat/x", in: teammate)
+
+        try await service.deleteRemoteBranch(remote, in: repo.repo)
+
+        let snapshot = try await service.snapshot(of: repo.repo)
+        XCTAssertFalse(snapshot.remoteBranches.contains { $0.name == "feat/x" }, "the stale remote-tracking ref is removed")
+    }
+
+    func testCreateTrackingBranch() async throws {
+        let (remote, _) = try await remoteWithTeammate(branch: "feat/x")
+        var snapshot = try await service.snapshot(of: repo.repo)
+        XCTAssertTrue(snapshot.untrackedRemoteBranches.contains(remote))
+
+        try await service.createTrackingBranch("mine", from: remote, in: repo.repo)
+
+        snapshot = try await service.snapshot(of: repo.repo)
+        let mine = try XCTUnwrap(snapshot.branches.first { $0.name == "mine" })
+        XCTAssertEqual(snapshot.trackedRemote(of: mine), remote)
+        XCTAssertFalse(snapshot.untrackedRemoteBranches.contains(remote))
+        XCTAssertEqual(snapshot.mainWorktree?.branch, "main", "nothing is checked out")
+    }
+
+    @MainActor
+    func testTrackingBranchNameIsValidatedAndClashesAreReported() async throws {
+        let (remote, _) = try await remoteWithTeammate(branch: "feat/x")
+        let model = ProjectModel(project: Project(path: repo.repo.path), service: service)
+
+        do {
+            try await model.createTrackingBranch("bad name", from: remote)
+            XCTFail("accepted an invalid name")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("isn't a valid branch name"))
+        }
+        do {
+            try await model.createTrackingBranch("main", from: remote)
+            XCTFail("overwrote an existing branch")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("already exists"))
+        }
+    }
+
     @MainActor
     func testFetchNeedingCredentialsExplainsWhy() async throws {
         // An ssh that fails the way a key missing from the agent does.

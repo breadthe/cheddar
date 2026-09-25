@@ -25,6 +25,28 @@ extension GitService {
             .max()
     }
 
+    /// Deletes the branch on its remote, but only if it still points where our last fetch saw it
+    /// (`--force-with-lease`), so commits pushed since then aren't thrown away. A branch that's already
+    /// gone on the remote counts as deleted: its stale remote-tracking ref is removed.
+    func deleteRemoteBranch(_ remote: RemoteBranch, in repo: URL) async throws {
+        let ref = "refs/heads/\(remote.name)"
+        let push = ["push", "--force-with-lease=\(ref):\(remote.sha)", remote.remote, ":\(ref)"]
+        let result = try await git.run(push, in: repo, timeout: GitRunner.networkTimeout)
+        guard result.exitCode != 0 else { return }
+        let error = GitError(arguments: push, exitCode: result.exitCode, stderr: result.stderrString, timedOut: result.timedOut)
+        // Git rejects the lease the same way whether the branch moved or was deleted; ask the remote which.
+        guard error.isStaleLease else { throw error }
+        let current = try await git.output(["ls-remote", remote.remote, ref], in: repo, timeout: GitRunner.networkTimeout)
+        let stillThere = current.split(separator: "\n").contains { $0.split(separator: "\t").last.map(String.init) == ref }
+        guard !stillThere else { throw error }
+        try await git.output(["update-ref", "-d", remote.ref], in: repo)
+    }
+
+    /// A local branch at the remote branch, with it as the upstream. Nothing is checked out.
+    func createTrackingBranch(_ name: String, from remote: RemoteBranch, in repo: URL) async throws {
+        try await git.output(["branch", "--track", name, remote.ref], in: repo)
+    }
+
     /// `git fetch --all --prune`. Talks to the network, so it has a timeout; git can't prompt for
     /// credentials (see `GitError.needsCredentials`).
     func fetch(in repo: URL) async throws {

@@ -9,6 +9,7 @@ enum ProjectSheet: Identifiable {
     case deleteWorktree(Worktree, changes: [String])
     case handoff(HandoffPreflight)
     case adopt(Worktree)
+    case trackRemote(RemoteBranch)
 
     var id: String {
         switch self {
@@ -18,6 +19,7 @@ enum ProjectSheet: Identifiable {
         case .deleteWorktree(let worktree, _): "delete-\(worktree.path)"
         case .handoff(let preflight): "handoff-\(preflight.worktree.path)"
         case .adopt(let worktree): "adopt-\(worktree.path)"
+        case .trackRemote(let remote): "track-\(remote.ref)"
         }
     }
 }
@@ -55,6 +57,8 @@ final class ProjectModel {
     var branchToDelete: Branch?
     /// `git branch -d` refused this branch; offer `-D` with a warning.
     var unmergedBranch: String?
+    /// Asks before deleting a branch on its remote.
+    var remoteBranchToDelete: RemoteBranch?
     /// Asks before moving an orphaned folder to the Trash.
     var orphanToTrash: OrphanFolder?
     /// Exclude offers the user chose "Not Now" for, this session.
@@ -304,12 +308,26 @@ final class ProjectModel {
 
     /// Fetches every remote (with prune). Runs as a mutation: one at a time, then a refresh.
     func fetch() async {
+        await runNetwork("Couldn't fetch") { try await service.fetch(in: repo) }
+    }
+
+    func deleteRemoteBranch(_ remote: RemoteBranch) async {
+        await runNetwork("Couldn't delete \(remote.shortName)") { try await service.deleteRemoteBranch(remote, in: repo) }
+    }
+
+    func createTrackingBranch(_ name: String, from remote: RemoteBranch) async throws {
+        try await validateBranchName(name)
+        try await mutate { try await service.createTrackingBranch(name, from: remote, in: repo) }
+    }
+
+    /// A mutation that talks to a remote: failures become an alert, with advice when git needed credentials.
+    private func runNetwork(_ title: String, _ operation: () async throws -> Void) async {
         do {
-            try await mutate { try await service.fetch(in: repo) }
+            try await mutate(operation)
         } catch let error as GitError where error.needsCredentials {
-            alert = AppAlert(title: "Couldn't fetch", message: error.localizedDescription + "\n\n" + Self.credentialsHelp)
+            alert = AppAlert(title: title, message: error.localizedDescription + "\n\n" + Self.credentialsHelp)
         } catch {
-            report(error, title: "Couldn't fetch")
+            report(error, title: title)
         }
     }
 

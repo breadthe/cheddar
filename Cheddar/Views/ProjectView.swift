@@ -44,38 +44,7 @@ struct ProjectView: View {
             .alert(item: $model.alert) { alert in
                 Alert(title: Text(alert.title), message: Text(alert.message))
             }
-            .confirmationDialog(
-                "Delete branch \(model.branchToDelete?.name ?? "")?",
-                isPresented: isPresented($model.branchToDelete),
-                presenting: model.branchToDelete
-            ) { branch in
-                Button("Delete", role: .destructive) {
-                    Task { await model.deleteBranch(branch.name, force: false) }
-                }
-            }
-            .confirmationDialog(
-                "“\(model.unmergedBranch ?? "")” isn't fully merged",
-                isPresented: isPresented($model.unmergedBranch),
-                presenting: model.unmergedBranch
-            ) { branch in
-                Button("Delete Anyway", role: .destructive) {
-                    Task { await model.deleteBranch(branch, force: true) }
-                }
-                Button("Keep Branch", role: .cancel) {}
-            } message: { _ in
-                Text("It has commits that aren't in HEAD or its upstream. Deleting it with -D drops them; they stay recoverable from the reflog for a while.")
-            }
-            .confirmationDialog(
-                "Move \(model.orphanToTrash?.displayName ?? "") to the Trash?",
-                isPresented: isPresented($model.orphanToTrash),
-                presenting: model.orphanToTrash
-            ) { orphan in
-                Button("Move to Trash", role: .destructive) {
-                    Task { await model.moveToTrash(orphan) }
-                }
-            } message: { orphan in
-                Text("\(orphan.path)\n\nYou can put it back from the Trash in Finder.")
-            }
+            .modifier(Confirmations(model: model))
             .onChange(of: model.toolMissing) { _, missing in
                 if missing { Task { await dependencies.check() } }
             }
@@ -224,7 +193,10 @@ struct ProjectView: View {
     /// The remote branch `branch` tracks, as its own row under it. Hovering either highlights both.
     private func trackedRemoteRow(_ remote: RemoteBranch, of branch: Branch) -> some View {
         let tag = "rt:\(branch.name):\(remote.ref)"
-        return RemoteBranchRow(remote: remote, trackingBranch: branch)
+        return HStack {
+            RemoteBranchRow(remote: remote, trackingBranch: branch)
+            rowMenu(tag) { remoteActions(remote, tracked: true) }
+        }
             .tag(tag)
             .onHover { hover(tag, branch: branch.name, $0) }
             .listRowBackground(highlight(branch.name))
@@ -236,7 +208,13 @@ struct ProjectView: View {
         return Section {
             ForEach(untracked.filter { matches($0.shortName) }) { remote in
                 let tag = "r:\(remote.ref)"
-                RemoteBranchRow(remote: remote)
+                HStack {
+                    RemoteBranchRow(remote: remote)
+                    hoverButton("+ Branch", tag: tag, help: "New local branch tracking \(remote.shortName)") {
+                        model.sheet = .trackRemote(remote)
+                    }
+                    rowMenu(tag) { remoteActions(remote, tracked: false) }
+                }
                     .tag(tag)
                     .onHover { hover(tag, branch: nil, $0) }
             }
@@ -376,7 +354,22 @@ struct ProjectView: View {
             orphanActions(orphan)
         } else if tag.hasPrefix("b:"), let branch = snapshot.branches.first(where: { "b:\($0.name)" == tag }) {
             branchActions(branch, checkout: snapshot.worktree(checkingOut: branch.name))
+        } else if let remote = remoteBranch(for: tag) {
+            remoteActions(remote, tracked: tag.hasPrefix("rt:"))
         }
+    }
+
+    /// `tracked`: shown under the local branch that tracks it, rather than in Remote Branches.
+    @ViewBuilder
+    private func remoteActions(_ remote: RemoteBranch, tracked: Bool) -> some View {
+        Group {
+            if !tracked {
+                Button("New Tracking Branch…") { model.sheet = .trackRemote(remote) }
+                Divider()
+            }
+            Button("Delete on \(remote.remote)…", role: .destructive) { model.remoteBranchToDelete = remote }
+        }
+        .disabled(model.isBusy)
     }
 
     @ViewBuilder
@@ -533,6 +526,8 @@ struct ProjectView: View {
             HandoffSheet(model: model, preflight: preflight)
         case .adopt(let worktree):
             AdoptSheet(model: model, worktree: worktree)
+        case .trackRemote(let remote):
+            TrackingBranchSheet(model: model, remote: remote)
         }
     }
 
@@ -550,6 +545,12 @@ struct ProjectView: View {
             // Off while a sheet is up, so ⌘⌫ in a text field can't reach the menu.
             deleteSelection: model.sheet == nil ? deleteSelectionAction : nil
         )
+    }
+
+    /// For `rt:<branch>:<ref>` and `r:<ref>` tags; `:` can't occur in ref names, so the ref is the tail.
+    private func remoteBranch(for tag: String) -> RemoteBranch? {
+        guard tag.hasPrefix("r:") || tag.hasPrefix("rt:") else { return nil }
+        return model.snapshot?.remoteBranches.first { tag.hasSuffix(":\($0.ref)") }
     }
 
     private func worktree(for tag: String) -> Worktree? {
@@ -570,6 +571,9 @@ struct ProjectView: View {
     private var deleteSelectionAction: (() -> Void)? {
         if let worktree = selectedLinkedWorktree {
             return { Task { await model.requestDelete(worktree) } }
+        }
+        if let remote = selection.flatMap(remoteBranch(for:)) {
+            return { model.remoteBranchToDelete = remote }
         }
         guard let selection, selection.hasPrefix("b:"), let snapshot = model.snapshot,
               let branch = snapshot.branches.first(where: { "b:\($0.name)" == selection }),
@@ -615,9 +619,6 @@ struct ProjectView: View {
         branch != nil && branch == hoveredBranch ? Color.accentColor.opacity(0.12) : nil
     }
 
-    private func isPresented<T>(_ item: Binding<T?>) -> Binding<Bool> {
-        Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
-    }
 }
 
 /// Install help for a missing app or tool, shown as a popover on the row it was picked from.
@@ -626,4 +627,73 @@ struct InstallHelpRequest: Equatable {
     let tag: String
 
     static func == (lhs: Self, rhs: Self) -> Bool { lhs.dependency.id == rhs.dependency.id && lhs.tag == rhs.tag }
+}
+
+/// ProjectView's delete and trash confirmations. Kept out of its `body`, whose modifier chain got too long
+/// to type-check.
+private struct Confirmations: ViewModifier {
+    @Bindable var model: ProjectModel
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Delete branch \(model.branchToDelete?.name ?? "")?",
+                isPresented: isPresented($model.branchToDelete),
+                presenting: model.branchToDelete
+            ) { branch in
+                Button("Delete", role: .destructive) {
+                    Task { await model.deleteBranch(branch.name, force: false) }
+                }
+            }
+            .confirmationDialog(
+                "“\(model.unmergedBranch ?? "")” isn't fully merged",
+                isPresented: isPresented($model.unmergedBranch),
+                presenting: model.unmergedBranch
+            ) { branch in
+                Button("Delete Anyway", role: .destructive) {
+                    Task { await model.deleteBranch(branch, force: true) }
+                }
+                Button("Keep Branch", role: .cancel) {}
+            } message: { _ in
+                Text("It has commits that aren't in HEAD or its upstream. Deleting it with -D drops them; they stay recoverable from the reflog for a while.")
+            }
+            .confirmationDialog(
+                "Delete \(model.remoteBranchToDelete?.shortName ?? "") on \(model.remoteBranchToDelete?.remote ?? "the remote")?",
+                isPresented: isPresented($model.remoteBranchToDelete),
+                presenting: model.remoteBranchToDelete
+            ) { remote in
+                Button("Delete on \(remote.remote)", role: .destructive) {
+                    Task { await model.deleteRemoteBranch(remote) }
+                }
+            } message: { remote in
+                Text(deleteRemoteMessage(remote))
+            }
+            .confirmationDialog(
+                "Move \(model.orphanToTrash?.displayName ?? "") to the Trash?",
+                isPresented: isPresented($model.orphanToTrash),
+                presenting: model.orphanToTrash
+            ) { orphan in
+                Button("Move to Trash", role: .destructive) {
+                    Task { await model.moveToTrash(orphan) }
+                }
+            } message: { orphan in
+                Text("\(orphan.path)\n\nYou can put it back from the Trash in Finder.")
+            }
+    }
+
+    private func deleteRemoteMessage(_ remote: RemoteBranch) -> String {
+        let trackers = (model.snapshot?.branches ?? []).filter { $0.upstreamRef == remote.ref }.map(\.name)
+        var lines = ["This deletes the branch on \(remote.remote) for everyone. On GitHub, open pull requests from it are closed."]
+        if trackers.count == 1 {
+            lines.append("Your local branch \(trackers[0]) keeps its commits; its upstream will show as gone.")
+        } else if trackers.count > 1 {
+            lines.append("Your local branches \(trackers.joined(separator: ", ")) keep their commits; their upstreams will show as gone.")
+        }
+        lines.append("Cheddar only deletes it if it still points at \(remote.sha.prefix(7)), as of your last fetch.")
+        return lines.joined(separator: "\n\n")
+    }
+
+    private func isPresented<T>(_ item: Binding<T?>) -> Binding<Bool> {
+        Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    }
 }

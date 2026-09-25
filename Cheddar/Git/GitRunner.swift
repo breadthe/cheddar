@@ -10,12 +10,18 @@ struct GitError: LocalizedError {
 
     var errorDescription: String? {
         if timedOut { return "git \(arguments.first ?? "") didn't finish within \(Int(GitRunner.networkTimeout)) seconds, so Cheddar stopped it." }
+        if isStaleLease {
+            return "The branch changed on the remote since your last fetch, so Cheddar left it alone. Fetch, check what changed, then try again."
+        }
         let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         return message.isEmpty ? "git \(arguments.joined(separator: " ")) failed (exit \(exitCode))" : message
     }
 
     /// `git branch -d` refused because the branch has commits not merged into HEAD or its upstream.
     var isNotFullyMerged: Bool { stderr.contains("not fully merged") }
+
+    /// A push with `--force-with-lease` was refused: the remote ref no longer matches what we last fetched.
+    var isStaleLease: Bool { stderr.contains("(stale info)") }
 
     /// A remote asked for a password, passphrase or host key confirmation, which Cheddar can't answer
     /// (`GIT_TERMINAL_PROMPT=0`, no terminal for ssh).
