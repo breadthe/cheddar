@@ -85,12 +85,17 @@ scripts/make-icons.sh
 
 ## Screenshots
 
+**Light mode**
+
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="screenshots/cheddar-dark.png">
-  <img src="screenshots/cheddar-light.png" alt="Cheddar's main window, showing a project's worktrees from Cheddar, Claude Code and Codex, and its branches with status">
+  <img src="screenshots/cheddar-light.png" alt="Cheddar's main window in light mode, showing a project's worktrees from Cheddar, Claude Code and Codex, and its branches with status">
 </picture>
 
-The main window follows your GitHub theme. See it in [light](screenshots/cheddar-light.png) and [dark](screenshots/cheddar-dark.png).
+**Dark mode**
+
+<picture>
+  <img src="screenshots/cheddar-dark.png" alt="Cheddar's main window in dark mode, showing a project's worktrees from Cheddar, Claude Code and Codex, and its branches with status">
+</picture>
 
 | General | Appearance |
 |---|---|
