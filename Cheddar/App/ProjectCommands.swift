@@ -25,6 +25,7 @@ extension FocusedValues {
 struct ProjectCommandMenus: Commands {
     @FocusedValue(\.projectCommands) private var project
     @AppStorage("showCommandLog") private var showLog = false
+    @AppStorage("showInspector") private var showInspector = false
 
     var body: some Commands {
         CommandGroup(before: .toolbar) {
@@ -35,6 +36,8 @@ struct ProjectCommandMenus: Commands {
                 .disabled(project?.isEnabled != true || project?.fetch == nil)
             Button(showLog ? "Hide Command Log" : "Show Command Log") { showLog.toggle() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button(showInspector ? "Hide Inspector" : "Show Inspector") { showInspector.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
             Divider()
         }
         CommandMenu("Worktree") {

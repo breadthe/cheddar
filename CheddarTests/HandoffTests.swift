@@ -152,6 +152,41 @@ final class HandoffTests: XCTestCase {
         XCTAssertEqual(try read("repo/a.txt"), "codex work\n")
     }
 
+    func testRenamesTheBranchWhileHandingOff() async throws {
+        try await repo.run("worktree", "add", "-b", "claude/zealous-hopper", repo.path("repo/.claude/worktrees/zealous-hopper"))
+        try write("from claude\n", to: "repo/.claude/worktrees/zealous-hopper/a.txt")
+        let agent = try await worktree(at: "repo/.claude/worktrees/zealous-hopper")
+
+        let branch = try await service.handOff(agent, newBranch: "feat/login", stashMainChanges: false, in: repo.repo)
+
+        XCTAssertEqual(branch, "feat/login")
+        let current = try await mainBranch()
+        XCTAssertEqual(current, "feat/login")
+        XCTAssertEqual(try read("repo/a.txt"), "from claude\n")
+        let branches = try await repo.run("branch", "--format=%(refname:short)")
+        XCTAssertFalse(branches.contains("claude/zealous-hopper"), "renamed, not copied")
+    }
+
+    func testRenameToATakenNameChangesNothing() async throws {
+        try await repo.run("branch", "taken")
+        try await repo.run("worktree", "add", "-b", "claude/x", repo.path("repo/.claude/worktrees/x"))
+        try write("wip\n", to: "repo/.claude/worktrees/x/a.txt")
+        let agent = try await worktree(at: "repo/.claude/worktrees/x")
+
+        do {
+            try await service.handOff(agent, newBranch: "taken", stashMainChanges: false, in: repo.repo)
+            XCTFail("expected git to refuse the rename")
+        } catch {}
+
+        let stillThere = try await worktree(at: "repo/.claude/worktrees/x")
+        XCTAssertEqual(stillThere.branch, "claude/x")
+        XCTAssertEqual(try read("repo/.claude/worktrees/x/a.txt"), "wip\n")
+        let current = try await mainBranch()
+        XCTAssertEqual(current, "main")
+        let stashes = try await stashList()
+        XCTAssertEqual(stashes, "")
+    }
+
     func testRefusesLockedWorktree() async throws {
         try await service.createWorktree(named: "feat", branch: .new(name: "feat", base: nil), in: repo.repo)
         let path = repo.path("repo/.cheddar/worktrees/feat")

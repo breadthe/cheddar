@@ -46,7 +46,8 @@ extension GitService {
 
     /// Moves work on a worktree's branch into the main checkout (see specs.md → Hand off):
     /// stash W's changes, remove W, switch main to the branch, pop the stash there.
-    /// A detached W first gets `newBranch`. A dirty main checkout needs `stashMainChanges`.
+    /// A detached W first gets `newBranch`; on a branch, a different `newBranch` renames it first
+    /// (`git branch -m`). A dirty main checkout needs `stashMainChanges`.
     /// Never merges, rebases or deletes the branch. Returns the branch handed off.
     @discardableResult
     func handOff(_ worktree: Worktree, newBranch: String?, stashMainChanges: Bool, in repo: URL) async throws -> String {
@@ -71,7 +72,12 @@ extension GitService {
             throw OperationError(errorDescription: "The main checkout has uncommitted changes. Stash or commit them first.")
         }
         let branch: String
-        if let existing = w.branch {
+        var notes: [String] = []
+        if let existing = w.branch, let newBranch, !newBranch.isEmpty, newBranch != existing {
+            try await git.output(["branch", "-m", existing, newBranch], in: repo)
+            branch = newBranch
+            notes.append("The branch was renamed from \(existing) to \(newBranch).")
+        } else if let existing = w.branch {
             branch = existing
         } else if let newBranch, !newBranch.isEmpty {
             try await git.output(["switch", "-c", newBranch], in: wURL)
@@ -80,7 +86,6 @@ extension GitService {
             throw OperationError(errorDescription: "The worktree has a detached HEAD. Give it a branch name first.")
         }
 
-        var notes: [String] = []
         if !mainChanges.isEmpty {
             let message = Self.mainStashMessage(branch: branch)
             // Exclude only nested worktrees git lists as untracked; naming an ignored path makes stash fail.

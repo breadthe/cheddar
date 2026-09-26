@@ -619,31 +619,41 @@ struct HandoffSheet: View {
     let model: ProjectModel
     let preflight: HandoffPreflight
 
-    @State private var newBranch = ""
+    /// Prefilled with the worktree's branch; editing it renames the branch. Required when detached.
+    @State private var newBranch: String
     @State private var stashMain = false
+
+    init(model: ProjectModel, preflight: HandoffPreflight) {
+        self.model = model
+        self.preflight = preflight
+        _newBranch = State(initialValue: preflight.worktree.branch ?? "")
+    }
 
     private var worktree: Worktree { preflight.worktree }
     /// The branch the main checkout ends up on.
-    private var branch: String { worktree.branch ?? newBranch }
+    private var branch: String { newBranch.trimmingCharacters(in: .whitespaces) }
+    /// Renaming the worktree's branch (it has one, and the field says something else).
+    private var isRenaming: Bool { worktree.branch.map { $0 != branch } ?? false }
 
     private var canSubmit: Bool {
         !worktree.isLocked
             && (preflight.mainChanges.isEmpty || stashMain)
-            && (worktree.branch != nil || !newBranch.isEmpty)
+            && !branch.isEmpty
     }
 
     var body: some View {
         SheetScaffold(title: "Hand Off", actionTitle: "Hand Off", canSubmit: canSubmit) {
             try await model.handOff(
                 worktree,
-                newBranch: worktree.branch == nil ? newBranch : nil,
+                newBranch: worktree.branch == nil || isRenaming ? branch : nil,
                 stashMainChanges: stashMain
             )
         } fields: {
             Section {
                 LabeledContent("Worktree") { Text(worktree.displayName).monospaced() }
-                if let current = worktree.branch {
-                    LabeledContent("Branch") { Text(current).monospaced() }
+                if worktree.branch != nil {
+                    TextField("Branch", text: $newBranch)
+                        .monospaced()
                 } else {
                     TextField("New branch", text: $newBranch, prompt: Text("feat/from-\(worktree.shortHead ?? "worktree")"))
                         .monospaced()
@@ -656,7 +666,9 @@ struct HandoffSheet: View {
                 footerText(
                     worktree.branch == nil
                         ? "This worktree has a detached HEAD at \(worktree.shortHead ?? "?"). The main checkout needs a named branch, so Cheddar creates one there first. Then it removes the worktree and switches the main checkout to it. The branch isn't merged, rebased or deleted."
-                        : "Cheddar removes the worktree and switches the main checkout to \(branch). The branch isn't merged, rebased or deleted."
+                        : isRenaming
+                            ? "Cheddar first renames \(worktree.branch ?? "") to \(branch.isEmpty ? "…" : branch) (git branch -m, which keeps its upstream setting but doesn't rename it on the remote). Then it removes the worktree and switches the main checkout to it. The branch isn't merged, rebased or deleted."
+                            : "Cheddar removes the worktree and switches the main checkout to \(branch). Change the name above to rename the branch first. The branch isn't merged, rebased or deleted."
                 )
             }
 

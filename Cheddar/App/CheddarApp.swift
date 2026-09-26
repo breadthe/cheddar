@@ -31,6 +31,11 @@ struct CheddarApp: App {
                     .keyboardShortcut("o")
                     .disabled(dependencies.git == nil)
             }
+            CommandGroup(before: .toolbar) {
+                Button("Go to Project or Worktree…") { appState.isShowingPalette = true }
+                    .keyboardShortcut("k")
+                    .disabled(dependencies.git == nil || appState.projects.isEmpty)
+            }
             ProjectCommandMenus()
         }
 

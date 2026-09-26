@@ -18,6 +18,8 @@ Cheddar is a native macOS app for managing git worktrees and branches. This manu
 - [Cleaning up](#cleaning-up)
 - [Fetching and comparing with remotes](#fetching-and-comparing-with-remotes)
 - [Filtering and search](#filtering-and-search)
+- [Command palette](#command-palette)
+- [Inspector](#inspector)
 - [Command Log](#command-log)
 - [Settings](#settings)
 - [Setup screen](#setup-screen)
@@ -110,7 +112,7 @@ Other actions: **Rename…** (annotated tags keep their message but get a new ta
 
 ## Opening a worktree
 
-Every non-missing worktree has an **Open** menu (hover a row, or double-click/Return to open directly in your preferred editor):
+Right-click a worktree (or use its **⋯** button) → **Open In** for these, or double-click/Return to open it directly in your preferred editor:
 
 - **Finder** — reveals the folder.
 - Your preferred **terminal** (Settings → General; defaults to Terminal).
@@ -171,7 +173,8 @@ If the dev command exits by itself, the row shows **✗ exited** with its status
 
 "Hand off" continues a branch from a linked worktree in your **main checkout**, then removes that worktree — handy when you want to keep working on a branch a tool like Claude Code or Codex started, without a second folder around.
 
-- If the worktree's branch is detached (no name), you're asked to name a branch first.
+- The sheet shows the worktree's branch in an editable field. Change the name to **rename the branch** as part of the hand-off (`git branch -m`), e.g. to give an agent's `claude/…` branch a real name. It happens first, so a name that's invalid or already taken stops the hand-off before anything else changes. The rename is local: the branch keeps its upstream setting, and nothing is renamed on the remote.
+- If the worktree's branch is detached (no name), the field is empty and you name a new branch there.
 - If your main checkout has uncommitted changes, you can stash them first (they're recoverable from the stash list).
 - Uncommitted changes in the worktree are carried over: stashed there, then popped in the main checkout (if they don't apply cleanly, they stay in the stash list rather than being lost).
 - **Ignored files** (dependencies, build output, `.env`, etc.) are **not** carried over — they're deleted with the worktree folder.
@@ -218,6 +221,21 @@ Right-click a worktree (not main) → **Clean Build Artifacts…** lists its dep
 - The **Origin** picker in the toolbar shows only worktrees (and orphans) from one origin.
 - The search field filters worktrees (by name or branch), branches (by name or upstream), remote branches, and tags, all by substring, case-insensitive.
 
+## Command palette
+
+**⌘K** (View → Go to Project or Worktree…) finds any project, worktree or local branch across **all** your projects, not just the one on screen. Type a few letters in order (`sfl` finds `storefront` › `feat-login`); matches at the start of words rank first. Worktrees come first, then branches, then projects, each with the selected project's first.
+
+**Return** (or a double-click) switches to that project and selects the worktree or branch, scrolling to it and clearing any filter that would hide it. **↑/↓** move the highlight; **Esc** closes the palette.
+
+## Inspector
+
+**⌥⌘I** (View → Show Inspector, or the sidebar button in the toolbar) opens a panel on the right that follows the selected row:
+
+- **A worktree:** its uncommitted **Changes** (staged in green, unstaged and untracked in red, with git's two status letters), and its **commits not on trunk**; if it has none (like main), its recent commits. Main's list leaves out the worktrees nested inside it.
+- **A branch:** its commits not on trunk.
+
+Click a file to see its diff against the last commit (an untracked file shows as all new), or a commit to see its message and patch, in git's diff colors: added lines green, removed red, hunk headers cyan. Very long diffs stop after 5,000 lines. The inspector refreshes along with the rest of the window.
+
 ## Command Log
 
 **View → Show Command Log** (⇧⌘L) opens a bottom panel listing every git command Cheddar has run in the current session, with its working directory, exit code, and output. Each command is colored by role: `git` and the subcommand in your accent color, flags (`-b`, `--force`) in gray, and paths, refs and values in the normal text color. It's useful for seeing exactly what Cheddar is doing, or diagnosing a failure. **Clear** empties it. Cheddar's `herd` commands (from [Run](#running-a-worktree)) show up here too. While worktrees are running, the panel gets a tab for each one's output.
@@ -249,6 +267,8 @@ If a required dependency (git, at a new-enough version) isn't found, Cheddar sho
 | ⇧⌘E | Open in preferred editor |
 | ⌫ | Delete selection |
 | ⇧⌘L | Show/Hide Command Log |
+| ⌘K | Go to project or worktree |
+| ⌥⌘I | Show/Hide Inspector |
 | ⌘, | Settings… |
 
 ## Where data lives

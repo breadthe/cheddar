@@ -37,6 +37,19 @@ enum GitColors {
     static let behind = Color.red
     static let clean = Color.secondary
 
+    /// Diff lines: `color.diff.new` green, `color.diff.old` red, `color.diff.frag` cyan, `color.diff.commit`
+    /// yellow; `color.diff.meta` is bold, shown bold and primary.
+    static func diff(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: .green
+        case .removed: .red
+        case .hunk: .cyan
+        case .commit: sha
+        case .meta: .primary
+        case .context: .secondary
+        }
+    }
+
     /// Command log words: `git` and the subcommand in the accent color, flags secondary, the rest primary.
     static func command(_ role: CommandToken.Role) -> Color {
         switch role {

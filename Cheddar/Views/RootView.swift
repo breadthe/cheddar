@@ -37,6 +37,15 @@ struct RootView: View {
                     guard case .success(let folder) = result else { return }
                     Task { await addProject(at: folder, git: git) }
                 }
+                .sheet(isPresented: $appState.isShowingPalette) {
+                    let services = Dictionary(uniqueKeysWithValues: appState.projects.map { ($0.id, service(for: $0, git: git)) })
+                    CommandPaletteView { project in
+                        guard let service = services[project.id] else { return PaletteContents() }
+                        async let worktrees = try? service.worktrees(in: project.url)
+                        async let branches = try? service.branches(in: project.url)
+                        return await PaletteContents(worktrees: worktrees ?? [], branches: branches ?? [])
+                    }
+                }
             } else {
                 SetupView()
             }

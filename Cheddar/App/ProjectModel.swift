@@ -276,7 +276,7 @@ final class ProjectModel {
     }
 
     func handOff(_ worktree: Worktree, newBranch: String?, stashMainChanges: Bool) async throws {
-        if worktree.branch == nil, let newBranch { try await validateBranchName(newBranch) }
+        if let newBranch, newBranch != worktree.branch { try await validateBranchName(newBranch) }
         try await mutate {
             try await service.handOff(worktree, newBranch: newBranch, stashMainChanges: stashMainChanges, in: repo)
         }

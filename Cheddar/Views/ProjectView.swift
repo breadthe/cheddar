@@ -8,12 +8,15 @@ struct ProjectView: View {
     @Environment(AppState.self) private var appState
     @Environment(RunManager.self) private var runs
     @AppStorage("showCommandLog") private var showLog = false
+    @AppStorage("showInspector") private var showInspector = false
     @AppStorage(PreferenceKey.editorApp) private var editorID = OpenIn.defaultEditorID
     @AppStorage(PreferenceKey.terminalApp) private var terminalID = OpenIn.terminal.bundleID
     /// `w:<path>`, `o:<path>` (orphan), `b:<branch>`, `rt:<branch>:<remote ref>` (the remote branch a local
     /// branch tracks, shown under it), `r:<remote ref>` (in Remote Branches) or `g:<tag>`. `:` can't occur
     /// in ref names.
     @State private var selection: String?
+    /// A row to scroll to (by its tag), set when the palette reveals a worktree.
+    @State private var scrollTarget: String?
     /// Hovering a branch highlights its worktree and vice versa.
     @State private var hoveredBranch: String?
     @State private var hoveredRow: String?
@@ -37,9 +40,17 @@ struct ProjectView: View {
             .navigationSubtitle((model.project.path as NSString).abbreviatingWithTildeInPath)
             .toolbar { toolbar }
             .searchable(text: $searchText, placement: .toolbar, prompt: "Filter worktrees and branches")
+            .inspector(isPresented: $showInspector) {
+                // A new inspector per model: it holds that project's service.
+                InspectorView(target: inspectorTarget, trunk: model.snapshot?.trunk, repo: model.project.path, service: model.service)
+                    .id(ObjectIdentifier(model))
+                    .inspectorColumnWidth(min: 260, ideal: 380, max: 800)
+            }
+            .onChange(of: appState.reveal) { handleReveal() }
             .task(id: ObjectIdentifier(model)) {
                 resetViewState()
                 await model.load()
+                handleReveal()
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                 Task { await model.load() }
@@ -62,86 +73,94 @@ struct ProjectView: View {
     @ViewBuilder
     private var content: some View {
         if let snapshot = model.snapshot {
-            List(selection: $selection) {
-                if !model.excludeOffers.isEmpty {
-                    Section {
-                        ForEach(model.excludeOffers, id: \.self) { pattern in
-                            ExcludeOfferRow(pattern: pattern) {
-                                Task { await model.exclude(pattern) }
-                            } dismiss: {
-                                model.dismissedExcludes.insert(pattern)
+            ScrollViewReader { proxy in
+                List(selection: $selection) {
+                    if !model.excludeOffers.isEmpty {
+                        Section {
+                            ForEach(model.excludeOffers, id: \.self) { pattern in
+                                ExcludeOfferRow(pattern: pattern) {
+                                    Task { await model.exclude(pattern) }
+                                } dismiss: {
+                                    model.dismissedExcludes.insert(pattern)
+                                }
+                                .disabled(model.isBusy)
                             }
+                        }
+                    }
+                    Section {
+                        ForEach(snapshot.worktrees.filter { matches($0.origin) && matches($0.displayName, $0.branch) }) { worktree in
+                            worktreeRow(worktree, snapshot: snapshot)
+                        }
+                        ForEach(snapshot.orphans.filter { matches($0.origin) && matches($0.displayName) }) { orphan in
+                            orphanRow(orphan)
+                        }
+                    } header: {
+                        HStack {
+                            Text("Worktrees")
+                            Spacer()
+                            if model.isMeasuring { ProgressView().controlSize(.mini) }
+                            Button {
+                                Task { await model.measureDiskUsage() }
+                            } label: {
+                                Image(systemName: "internaldrive")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(model.isMeasuring)
+                            .help("Calculate Disk Usage")
+                            .accessibilityLabel("Calculate Disk Usage")
+                        }
+                    }
+                    Section {
+                        ForEach(snapshot.branches.filter { matches($0.name, $0.upstream) }) { branch in
+                            let remote = snapshot.trackedRemote(of: branch)
+                            branchRow(branch, trackedRemote: remote, snapshot: snapshot)
+                            if let remote {
+                                trackedRemoteRow(remote, of: branch)
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Branches")
+                            Spacer()
+                            bulkDeleteControls
+                            Button {
+                                model.requestCleanUp()
+                            } label: {
+                                Image(systemName: "sparkles")
+                            }
+                            .buttonStyle(.borderless)
                             .disabled(model.isBusy)
+                            .help("Clean Up… (branches merged into trunk, missing worktrees)")
+                            .accessibilityLabel("Clean Up")
+                            Button {
+                                model.sheet = .newBranch(base: nil)
+                            } label: {
+                                Image(systemName: "plus")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(model.isBusy)
+                            .help("New Branch")
+                            .accessibilityLabel("New Branch")
                         }
                     }
+                    if !snapshot.remotes.isEmpty {
+                        remoteBranchesSection(snapshot)
+                    }
+                    tagsSection(snapshot)
                 }
-                Section {
-                    ForEach(snapshot.worktrees.filter { matches($0.origin) && matches($0.displayName, $0.branch) }) { worktree in
-                        worktreeRow(worktree, snapshot: snapshot)
-                    }
-                    ForEach(snapshot.orphans.filter { matches($0.origin) && matches($0.displayName) }) { orphan in
-                        orphanRow(orphan)
-                    }
-                } header: {
-                    HStack {
-                        Text("Worktrees")
-                        Spacer()
-                        if model.isMeasuring { ProgressView().controlSize(.mini) }
-                        Button {
-                            Task { await model.measureDiskUsage() }
-                        } label: {
-                            Image(systemName: "internaldrive")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(model.isMeasuring)
-                        .help("Calculate Disk Usage")
-                        .accessibilityLabel("Calculate Disk Usage")
-                    }
+                .contextMenu(forSelectionType: String.self) { tags in
+                    if tags.count == 1, let tag = tags.first { actions(for: tag, snapshot: snapshot) }
+                } primaryAction: { tags in
+                    // Double-click or Return opens a worktree in the preferred editor.
+                    guard tags.count == 1, let worktree = worktree(for: tags.first!), !worktree.isMissing else { return }
+                    open(worktree, in: editor, tag: tags.first!)
                 }
-                Section {
-                    ForEach(snapshot.branches.filter { matches($0.name, $0.upstream) }) { branch in
-                        let remote = snapshot.trackedRemote(of: branch)
-                        branchRow(branch, trackedRemote: remote, snapshot: snapshot)
-                        if let remote {
-                            trackedRemoteRow(remote, of: branch)
-                        }
-                    }
-                } header: {
-                    HStack {
-                        Text("Branches")
-                        Spacer()
-                        bulkDeleteControls
-                        Button {
-                            model.requestCleanUp()
-                        } label: {
-                            Image(systemName: "sparkles")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(model.isBusy)
-                        .help("Clean Up… (branches merged into trunk, missing worktrees)")
-                        .accessibilityLabel("Clean Up")
-                        Button {
-                            model.sheet = .newBranch(base: nil)
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(model.isBusy)
-                        .help("New Branch")
-                        .accessibilityLabel("New Branch")
-                    }
+                // The palette's worktree, once selected.
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    proxy.scrollTo(target, anchor: .center)
+                    scrollTarget = nil
                 }
-                if !snapshot.remotes.isEmpty {
-                    remoteBranchesSection(snapshot)
-                }
-                tagsSection(snapshot)
-            }
-            .contextMenu(forSelectionType: String.self) { tags in
-                if tags.count == 1, let tag = tags.first { actions(for: tag, snapshot: snapshot) }
-            } primaryAction: { tags in
-                // Double-click or Return opens a worktree in the preferred editor.
-                guard tags.count == 1, let worktree = worktree(for: tags.first!), !worktree.isMissing else { return }
-                open(worktree, in: editor, tag: tags.first!)
             }
         } else if let error = model.loadError {
             ContentUnavailableView {
@@ -170,18 +189,9 @@ struct ProjectView: View {
                 if let session = runs.sessions[worktree.path], session.isActive || session.hasFailed {
                     runControls(session)
                 }
-                Menu {
-                    openItems(worktree, tag: tag)
-                } label: {
-                    Text("Open")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .opacity(hoveredRow == tag ? 1 : 0)
-                .help("Open in Finder, Terminal, an editor or Claude Code")
                 if worktree.origin != .main {
                     if runs.sessions[worktree.path]?.isActive != true {
-                        // Not a mutation, so not disabled while one runs (like Open).
+                        // Not a mutation, so not disabled while one runs (like Open In).
                         Button("Run") { run(worktree) }
                             .buttonStyle(.borderless)
                             .opacity(hoveredRow == tag ? 1 : 0)
@@ -195,6 +205,7 @@ struct ProjectView: View {
             rowMenu(tag) { worktreeActions(worktree, tag: tag) }
         }
         .tag(tag)
+        .id(tag)
         .onHover { hover(tag, branch: worktree.branch, $0) }
         .listRowBackground(highlight(worktree.branch))
         .popover(isPresented: installHelpBinding(for: tag), arrowEdge: .trailing) { installHelpPopover }
@@ -233,6 +244,7 @@ struct ProjectView: View {
             rowMenu(tag) { branchActions(branch, checkout: checkout) }
         }
         .tag(tag)
+        .id(tag)
         .onHover { hover(tag, branch: branch.name, $0) }
         .listRowBackground(highlight(branch.name))
     }
@@ -461,6 +473,10 @@ struct ProjectView: View {
                 Label("Command Log", systemImage: "terminal")
             }
             .help("Command Log (⇧⌘L)")
+            Toggle(isOn: $showInspector) {
+                Label("Inspector", systemImage: "sidebar.right")
+            }
+            .help("Inspector: changes and commits of the selected worktree or branch (⌥⌘I)")
         }
     }
 
@@ -597,6 +613,36 @@ struct ProjectView: View {
                 installHelp = InstallHelpRequest(dependency: Dependencies.claude, tag: tag)
             }
         }
+    }
+
+    // MARK: Inspector & palette
+
+    /// The selected worktree (present) or branch, for the inspector.
+    private var inspectorTarget: InspectorModel.Target? {
+        guard let selection, let snapshot = model.snapshot else { return nil }
+        if let worktree = worktree(for: selection), !worktree.isMissing {
+            let nested = worktree.origin == .main ? snapshot.worktrees.filter { $0.origin != .main }.map(\.path) : []
+            return .worktree(worktree, nested: nested)
+        }
+        if selection.hasPrefix("b:"), let branch = snapshot.branches.first(where: { "b:\($0.name)" == selection }) {
+            return .branch(branch)
+        }
+        return nil
+    }
+
+    /// Selects (and scrolls to) the worktree or branch picked in the palette, once this project has loaded:
+    /// right away for the project on screen, or after switching projects, when the new model's first load
+    /// finishes.
+    private func handleReveal() {
+        guard let request = appState.reveal, request.projectID == model.project.id, let snapshot = model.snapshot else { return }
+        appState.reveal = nil
+        guard let tag = request.rowTag,
+              worktree(for: tag) != nil || snapshot.branches.contains(where: { "b:\($0.name)" == tag }) else { return }
+        // The row may be hidden by the search or origin filter.
+        searchText = ""
+        originFilter = nil
+        selection = tag
+        scrollTarget = tag
     }
 
     // MARK: Run

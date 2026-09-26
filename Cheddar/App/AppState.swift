@@ -11,6 +11,10 @@ final class AppState {
     }
     /// Drives the folder picker (sidebar **+**, File → Add Project…).
     var isAddingProject = false
+    /// The ⌘K palette.
+    var isShowingPalette = false
+    /// Set by the palette; the project view with that ID carries it out, then clears it.
+    var reveal: RevealRequest?
     var alert: AppAlert?
 
     var selectedProject: Project? { projects.first { $0.id == selection } }
