@@ -1,41 +1,74 @@
 import SwiftUI
 
-/// Bottom panel listing every git command the app ran, with its output.
-struct CommandLogView: View {
+/// The bottom panel: the command log, plus a tab with each run's output (see `RunOutputView`).
+struct BottomPanel: View {
     @Environment(CommandLog.self) private var log
+    @Environment(RunManager.self) private var runs
 
     var body: some View {
+        @Bindable var runs = runs
+        let session = runs.panelSelection.flatMap { runs.sessions[$0] }
         VStack(spacing: 0) {
             HStack {
-                Text("Command Log")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                if runs.sessions.isEmpty {
+                    Text("Command Log")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("Show", selection: $runs.panelSelection) {
+                        Text("Command Log").tag(String?.none)
+                        ForEach(runs.sortedSessions) { session in
+                            Text(session.name).tag(String?.some(session.id))
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+                }
                 Spacer()
-                Button("Clear") { log.clear() }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                    .disabled(log.entries.isEmpty)
+                if let session {
+                    RunOutputView.Actions(session: session)
+                } else {
+                    Button("Clear") { log.clear() }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .disabled(log.entries.isEmpty)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(log.entries) { entry in
-                            EntryView(entry: entry).id(entry.id)
-                        }
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                }
-                .onChange(of: log.entries.last?.id) { _, id in
-                    if let id { proxy.scrollTo(id, anchor: .bottom) }
-                }
+            if let session {
+                RunOutputView(session: session)
+            } else {
+                CommandLogView()
             }
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+/// Every git command the app ran, with its output.
+struct CommandLogView: View {
+    @Environment(CommandLog.self) private var log
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(log.entries) { entry in
+                        EntryView(entry: entry).id(entry.id)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            }
+            .onChange(of: log.entries.last?.id) { _, id in
+                if let id { proxy.scrollTo(id, anchor: .bottom) }
+            }
+        }
     }
 
     private struct EntryView: View {

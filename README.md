@@ -83,6 +83,7 @@ scripts/make-icons.sh
   - Settings are stored under the app ID `com.breadthe.Cheddar`.
 - **Worktree folders:** Cheddar's own worktrees go in `<repo>/.cheddar/worktrees/`, and Cheddar adds `.cheddar/` to `.git/info/exclude`.
 - **First run of "Claude Code Here":** macOS asks whether Cheddar may control Terminal. You can change that later in System Settings → Privacy & Security → Automation.
+- **Running a worktree** (see the [manual](MANUAL.md#running-a-worktree)) copies main's `.env`, `vendor/` and `node_modules/` into the worktree as APFS clones, and, when main is a Laravel Herd site, links the worktree as its own Herd site until you stop it.
 - **App Sandbox is off,** because the sandbox blocks running git on arbitrary folders.
 
 ## Screenshots

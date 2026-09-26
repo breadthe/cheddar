@@ -11,6 +11,7 @@ Cheddar is a native macOS app for managing git worktrees and branches. This manu
 - [Remote branches](#remote-branches)
 - [Tags](#tags)
 - [Opening a worktree](#opening-a-worktree)
+- [Running a worktree](#running-a-worktree)
 - [Hand off](#hand-off)
 - [Adopting foreign worktrees](#adopting-foreign-worktrees)
 - [Orphaned and missing worktrees](#orphaned-and-missing-worktrees)
@@ -117,6 +118,54 @@ Every non-missing worktree has an **Open** menu (hover a row, or double-click/Re
 
 The **Worktree** menu bar menu mirrors these for the selected worktree: **New Worktree…** (⌘N), **Open in `<editor>`** (⇧⌘E), **Hand Off…**, and **Delete…** (⌫).
 
+## Running a worktree
+
+**Run** lets you try what an agent built in its worktree the way you'd try main: same `.env`, same dependencies, same database, and a URL of its own. Your main checkout isn't touched, and the agent can keep working. Hover a worktree (not main) and click **Run**, or right-click → **Run**.
+
+### What Run does
+
+1. **Brings over what git doesn't.** A new worktree has only the files git tracks, so it has no `.env`, `vendor/` or `node_modules/`. Run copies whichever of those main has and the worktree lacks, as long as git ignores them there, so they never show up as changes. The copies are APFS clones: instant, and they take no extra disk space until one side changes. They live in the worktree folder and are deleted with it.
+   **SQLite databases** that git ignores in main (`*.sqlite`, `*.sqlite3`, `*.db`, `*.db3`, anywhere in the project) aren't copied but **linked** at the same path, e.g. `database/database.sqlite` → main's. However the app finds its database (a relative `DB_DATABASE`, Laravel's default, Django's `db.sqlite3`, Rails' `storage/development.sqlite3`), it gets main's. SQLite follows the link, so its `-wal`/`-shm` files stay next to main's file and both sides see the same data.
+   **Uploaded files** are linked the same way, so the worktree sees (and adds to) main's uploads: in a Laravel app, everything git ignores under `storage/app/` (e.g. `storage/app/private/files/`) plus the `public/storage` link; in Rails, `storage/`; in Django, `media/`. Laravel's logs and caches (`storage/logs`, `storage/framework`) stay separate. Deleting the worktree removes only the links, never main's files.
+2. **Installs dependencies if the branch changed them.** If the worktree's lockfile differs from main's (or its dependencies folder is missing), Run reinstalls from the lockfile first without changing it: `composer install`, `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile` or `bun install --frozen-lockfile`.
+3. **Gives it a URL.** If main is a [Laravel Herd](https://herd.laravel.com) site, the worktree gets its own site next to it (details below). Otherwise the URL is whatever the dev server prints when it starts.
+4. **Starts the dev command** in the worktree folder: `composer run dev` if `composer.json` has a `dev` script, else `npm run dev` (or `pnpm`, `yarn`, `bun`, going by the lockfile) if `package.json` has one. If neither exists, Run asks for the command once per project. To change it later, right-click a worktree → **Dev Command…** (leave it empty to go back to automatic).
+5. **Opens the browser** once the server is up.
+
+While it runs, the row shows **● running**, a Safari button that reopens the URL, and **Stop**. Click the status to see the dev command's output: it's a tab in the bottom panel next to the Command Log. **Stop** ends the dev command and everything it started (Vite, queue workers, and so on) and removes the worktree's Herd site. Quitting Cheddar stops every run. If a worktree is deleted, handed off or moved while it's running, the run stops on its own.
+
+If the dev command exits by itself, the row shows **✗ exited** with its status; the output tab keeps what it printed until you **Close** it or run again.
+
+### What's shared with main, and what isn't
+
+- **The database and uploads are shared.** The copied `.env` points at main's database server, and SQLite files and upload folders are linked to main's (see above). A file the worktree uploads lands in main's folder. The exception: a brand-new folder the branch creates under `storage/app/` (one main doesn't have yet) stays in the worktree. Run never migrates anything; if the branch adds migrations, run them yourself, and remember main's database is the one that changes.
+- **Queue workers:** Laravel's `composer run dev` also starts a queue worker. With a shared database, the worktree's worker will pick up jobs queued by main too, while it runs.
+- **Your `.env` edits stick.** Run only copies `.env` when the worktree doesn't have one yet, so changes you make in the worktree's copy are kept for the next run.
+- **Hand off** lists the copied `.env`, `vendor/` and `node_modules/` among the ignored files that will be deleted with the worktree. That's expected: they're copies, and main still has its own.
+
+### By stack
+
+**Laravel with Herd** (main served at `https://<project>.test`)
+- Run links the worktree as `<project>-<worktree>` (e.g. `https://myapp-feat-login.test`), with main's HTTPS and PHP version, and points `APP_URL` in the worktree's `.env` at it. The browser opens once Vite (or `artisan serve`) is ready, or after 15 seconds if the dev command never announces a server.
+- The name is `<project>-<worktree>` rather than `<worktree>.<project>`: Herd sends every `*.<project>.test` address to main.
+- `composer run dev` also starts `php artisan serve`; it's harmless (it just takes the next free port) and Herd's URL is the one opened. Older projects without a `dev` composer script use `npm run dev` for Vite, and Herd serves the PHP.
+- **Stop** runs `herd unlink`, which removes the site, its certificate and its PHP version pin. If Cheddar is killed or crashes mid-run, the site is removed the next time Cheddar starts.
+- Uploads under `storage/app/` and the `public/storage` link (from `php artisan storage:link`) are shared with main, so public files show up too.
+
+**Laravel without Herd**
+- `composer run dev` starts `php artisan serve`, which takes the next free port when 8000 is busy (8001, 8002, …). Run opens the URL from its "Server running on […]" line and ignores Vite's, which only serves assets.
+- `APP_URL` in the copied `.env` still says main's URL. Most pages don't care (Laravel builds links from the request), but mail links and anything built from `APP_URL` will point at main.
+
+**Node (Vite, Next.js, Nuxt, SvelteKit, Astro, Remix…)**
+- `npm run dev` (or the package manager your lockfile says) runs as usual. Dev servers move to the next free port when main's is taken, and Run opens whatever `http://localhost:…` they print first.
+- `.env`, `.env.local` and the like are copied if they're ignored in the worktree.
+- In a monorepo, only the top-level `node_modules/` is copied; nested ones are rebuilt by the install step only when the lockfile differs. If a package inside is missing its dependencies, run the install once in the worktree.
+
+**Anything else** (Rails, Django, Go, Python…)
+- Set the command with **Dev Command…**, e.g. `bin/dev`, `bin/rails server -p 3001`, `python manage.py runserver 8001` or `go run .`. The browser opens at the first `http://localhost…`/`127.0.0.1…` address it prints.
+- Pick a different port from main's if the server doesn't move on its own.
+- Virtual environments (`.venv`) and `bundle` paths aren't copied: they contain absolute paths to main. Use main's by its full path in the command (e.g. `~/code/myapp/.venv/bin/python manage.py runserver 8001`), or create one in the worktree.
+
 ## Hand off
 
 "Hand off" continues a branch from a linked worktree in your **main checkout**, then removes that worktree — handy when you want to keep working on a branch a tool like Claude Code or Codex started, without a second folder around.
@@ -153,7 +202,7 @@ When a discovery root (like `.cheddar/worktrees` or `.claude/worktrees`) isn't y
 
 ## Command Log
 
-**View → Show Command Log** (⇧⌘L) opens a bottom panel listing every git command Cheddar has run in the current session, with its working directory, exit code, and output. Each command is colored by role: `git` and the subcommand in your accent color, flags (`-b`, `--force`) in gray, and paths, refs and values in the normal text color. It's useful for seeing exactly what Cheddar is doing, or diagnosing a failure. **Clear** empties it.
+**View → Show Command Log** (⇧⌘L) opens a bottom panel listing every git command Cheddar has run in the current session, with its working directory, exit code, and output. Each command is colored by role: `git` and the subcommand in your accent color, flags (`-b`, `--force`) in gray, and paths, refs and values in the normal text color. It's useful for seeing exactly what Cheddar is doing, or diagnosing a failure. **Clear** empties it. Cheddar's `herd` commands (from [Run](#running-a-worktree)) show up here too. While worktrees are running, the panel gets a tab for each one's output.
 
 ## Settings
 
@@ -186,6 +235,6 @@ If a required dependency (git, at a new-enough version) isn't found, Cheddar sho
 
 ## Where data lives
 
-- The project list: `~/Library/Application Support/Cheddar/projects.json`.
+- The project list: `~/Library/Application Support/Cheddar/projects.json`, with each project's trunk override and Run dev command.
 - Settings: stored under the app ID `com.breadthe.Cheddar` (macOS preferences).
 - Cheddar's own worktrees: `<repo>/.cheddar/worktrees/`.

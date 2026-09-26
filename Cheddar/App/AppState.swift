@@ -45,13 +45,29 @@ final class AppState {
 
     /// Sets or clears (nil) the project's trunk override.
     func setTrunk(_ trunk: String?, for project: Project) throws {
-        try save(projects.map { $0.id == project.id ? Project(path: $0.path, trunk: trunk) : $0 })
+        try update(project) { $0.trunk = trunk }
+    }
+
+    /// Sets Run's dev command for the project; blank goes back to detecting it.
+    func setDevCommand(_ command: String, for project: Project) throws {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        try update(project) { $0.devCommand = trimmed.isEmpty ? nil : trimmed }
     }
 
     /// Removes the project from Cheddar's list. Never touches disk.
     func removeProject(_ project: Project) throws {
         try save(projects.filter { $0.id != project.id })
         if selection == project.id { selection = projects.first?.id }
+    }
+
+    /// Changes one project's settings, keeping the others.
+    private func update(_ project: Project, _ change: (inout Project) -> Void) throws {
+        try save(projects.map {
+            guard $0.id == project.id else { return $0 }
+            var updated = $0
+            change(&updated)
+            return updated
+        })
     }
 
     /// Writes first, so the in-memory list never shows something that isn't saved.

@@ -137,3 +137,28 @@ extension GitService {
         return Paths.canonical(absolute)
     }
 }
+
+// MARK: Run
+
+extension GitService {
+    /// Which of `paths` (relative to `directory`, folders with a trailing `/` so `dir/` patterns match
+    /// paths that don't exist yet) git ignores there.
+    func ignoredPaths(_ paths: [String], in directory: String) async throws -> Set<String> {
+        guard !paths.isEmpty else { return [] }
+        let arguments = ["check-ignore", "--"] + paths
+        let result = try await git.run(arguments, in: URL(fileURLWithPath: directory, isDirectory: true))
+        // 0: some are ignored, 1: none are.
+        guard result.exitCode <= 1 else {
+            throw GitError(arguments: arguments, exitCode: result.exitCode, stderr: result.stderrString)
+        }
+        return Set(result.stdoutString.split(separator: "\n").map(String.init))
+    }
+
+    /// Every file and folder git ignores in `directory`, relative to it; an ignored folder is one entry
+    /// ending in `/` (so `node_modules/` isn't listed file by file).
+    func ignoredEntries(in directory: String) async throws -> [String] {
+        try await git.output(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+                             in: URL(fileURLWithPath: directory, isDirectory: true))
+            .split(separator: "\0").map(String.init)
+    }
+}

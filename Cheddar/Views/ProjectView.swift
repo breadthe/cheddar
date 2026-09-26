@@ -6,6 +6,7 @@ struct ProjectView: View {
     let model: ProjectModel
     @Environment(DependencyStore.self) private var dependencies
     @Environment(AppState.self) private var appState
+    @Environment(RunManager.self) private var runs
     @AppStorage("showCommandLog") private var showLog = false
     @AppStorage(PreferenceKey.editorApp) private var editorID = OpenIn.defaultEditorID
     @AppStorage(PreferenceKey.terminalApp) private var terminalID = OpenIn.terminal.bundleID
@@ -25,6 +26,9 @@ struct ProjectView: View {
 
 
     private var editor: ExternalApp { OpenIn.editor(for: editorID) }
+    /// The project as saved now. `model.project` is the copy the model was made with, and only settings the
+    /// model depends on (like trunk) rebuild it.
+    private var project: Project { appState.projects.first { $0.id == model.project.id } ?? model.project }
 
     var body: some View {
         @Bindable var model = model
@@ -139,6 +143,9 @@ struct ProjectView: View {
                     Task { await model.prune(worktree) }
                 }
             } else {
+                if let session = runs.sessions[worktree.path], session.isActive || session.hasFailed {
+                    runControls(session)
+                }
                 Menu {
                     openItems(worktree, tag: tag)
                 } label: {
@@ -149,6 +156,13 @@ struct ProjectView: View {
                 .opacity(hoveredRow == tag ? 1 : 0)
                 .help("Open in Finder, Terminal, an editor or Claude Code")
                 if worktree.origin != .main {
+                    if runs.sessions[worktree.path]?.isActive != true {
+                        // Not a mutation, so not disabled while one runs (like Open).
+                        Button("Run") { run(worktree) }
+                            .buttonStyle(.borderless)
+                            .opacity(hoveredRow == tag ? 1 : 0)
+                            .help("Run it like main: bring over main's .env and dependencies, start the dev command, open the browser")
+                    }
                     hoverButton("Hand Off", tag: tag, help: "Continue on this branch in the main checkout") {
                         Task { await model.requestHandoff(worktree) }
                     }
@@ -507,6 +521,9 @@ struct ProjectView: View {
     private func worktreeActions(_ worktree: Worktree, tag: String) -> some View {
         if !worktree.isMissing {
             Menu("Open In") { openItems(worktree, tag: tag) }
+            if worktree.origin != .main {
+                runItems(worktree)
+            }
             Divider()
         }
         Group {
@@ -554,6 +571,58 @@ struct ProjectView: View {
                 installHelp = InstallHelpRequest(dependency: Dependencies.claude, tag: tag)
             }
         }
+    }
+
+    // MARK: Run
+
+    @ViewBuilder
+    private func runItems(_ worktree: Worktree) -> some View {
+        let session = runs.sessions[worktree.path]
+        if let session, session.isActive {
+            if let url = session.url {
+                Button("Open in Browser") { NSWorkspace.shared.open(url) }
+            }
+            Button("Stop Running") { Task { await runs.stop(session.id) } }
+        } else {
+            Button("Run") { run(worktree) }
+        }
+        if let session {
+            Button("Show Output") { showOutput(session) }
+        }
+        Button("Dev Command…") { model.sheet = .devCommand(then: nil) }
+    }
+
+    /// Shown (not just on hover) while a run is starting or running, or after it failed: its status (click
+    /// for the output), the browser, and Stop.
+    private func runControls(_ session: RunSession) -> some View {
+        HStack(spacing: 8) {
+            Button { showOutput(session) } label: { RunStatusLabel(session: session) }
+                .help("Show output")
+            if session.phase == .running, let url = session.url {
+                Button { NSWorkspace.shared.open(url) } label: { Image(systemName: "safari") }
+                    .help("Open \(url.absoluteString)")
+                    .accessibilityLabel("Open in Browser")
+            }
+            if session.isActive {
+                Button("Stop") { Task { await runs.stop(session.id) } }
+            }
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+    }
+
+    /// Runs the worktree with the project's dev command, detected unless set; asks for one if there's none.
+    private func run(_ worktree: Worktree) {
+        guard let command = project.devCommand ?? RunRecipe.devCommand(in: worktree.path) else {
+            model.sheet = .devCommand(then: worktree)
+            return
+        }
+        Task { await model.run(worktree, devCommand: command, searchPath: dependencies.searchPath) }
+    }
+
+    private func showOutput(_ session: RunSession) {
+        showLog = true
+        runs.panelSelection = session.id
     }
 
     private func open(_ worktree: Worktree, in app: ExternalApp, tag: String) {
@@ -663,6 +732,11 @@ struct ProjectView: View {
             TrackingBranchSheet(model: model, remote: remote)
         case .renameTag(let tag, let onRemotes):
             RenameTagSheet(model: model, tag: tag, onRemotes: onRemotes, hasRemotes: !snapshot.remotes.isEmpty)
+        case .devCommand(let worktree):
+            DevCommandSheet(project: project, worktree: worktree) { command in
+                try appState.setDevCommand(command, for: project)
+                if let worktree { run(worktree) }
+            }
         }
     }
 

@@ -699,3 +699,43 @@ struct AdoptSheet: View {
         }
     }
 }
+
+/// Run's dev command for the project, when the detected one isn't right or there's none.
+struct DevCommandSheet: View {
+    let project: Project
+    /// Run once it's saved; then a command is needed.
+    let worktree: Worktree?
+    let save: (_ command: String) throws -> Void
+
+    @State private var command: String
+    private let detected: String?
+
+    init(project: Project, worktree: Worktree?, save: @escaping (_ command: String) throws -> Void) {
+        self.project = project
+        self.worktree = worktree
+        self.save = save
+        _command = State(initialValue: project.devCommand ?? "")
+        detected = RunRecipe.devCommand(in: worktree?.path ?? project.path)
+    }
+
+    var body: some View {
+        SheetScaffold(
+            title: "Dev Command",
+            actionTitle: worktree == nil ? "Save" : "Save & Run",
+            canSubmit: worktree == nil || !command.trimmingCharacters(in: .whitespaces).isEmpty || detected != nil
+        ) {
+            try save(command)
+        } fields: {
+            Section {
+                TextField("Command", text: $command, prompt: Text(detected ?? "npm run dev"))
+                    .monospaced()
+            } header: {
+                Text(project.name)
+            } footer: {
+                Text(detected.map { "Leave it empty to use \($0), found in this project." }
+                    ?? "No composer.json or package.json dev script was found, so Run needs the command you use to start this project locally.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}

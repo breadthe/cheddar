@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Every git command the app runs, with its output, so nothing is hidden.
+/// Every git command the app runs (plus the few other tools, like `herd`), with its output, so nothing is hidden.
 @Observable @MainActor
 final class CommandLog {
     struct Entry: Identifiable {
@@ -25,8 +25,8 @@ final class CommandLog {
 
     nonisolated init() {}
 
-    func record(arguments: [String], directory: URL, result: Result<ProcessOutput, Error>) {
-        let tokens = Self.tokens(for: arguments)
+    func record(program: String = "git", arguments: [String], directory: URL, result: Result<ProcessOutput, Error>) {
+        let tokens = Self.tokens(for: arguments, program: program)
         let command = tokens.map(\.text).joined(separator: " ")
         switch result {
         case .success(let output):
@@ -59,11 +59,11 @@ final class CommandLog {
         text.count > outputLimit ? String(text.prefix(outputLimit)) + "\n… (truncated)" : text
     }
 
-    /// Classifies `git <arguments>` from the argument array it ran with, so no shell parsing is needed:
-    /// `git` and the subcommand, flags (`-x`, `--x`, `--x=y`, and `--` itself), and everything else.
-    /// After `--`, everything is a path.
-    nonisolated static func tokens(for arguments: [String]) -> [CommandToken] {
-        var tokens = [CommandToken(text: "git", role: .program)]
+    /// Classifies `git <arguments>` (or another program's) from the argument array it ran with, so no shell
+    /// parsing is needed: the program and the subcommand, flags (`-x`, `--x`, `--x=y`, and `--` itself), and
+    /// everything else. After `--`, everything is a path.
+    nonisolated static func tokens(for arguments: [String], program: String = "git") -> [CommandToken] {
+        var tokens = [CommandToken(text: program, role: .program)]
         var hasSubcommand = false
         var afterSeparator = false
         for argument in arguments {

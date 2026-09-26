@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(DependencyStore.self) private var dependencies
     @Environment(AppState.self) private var appState
+    @Environment(RunManager.self) private var runs
     @AppStorage("showCommandLog") private var showLog = false
     @AppStorage(PreferenceKey.appearance) private var appearance = Appearance.system.rawValue
     @AppStorage(PreferenceKey.codexHome) private var codexHome = ""
@@ -27,7 +28,7 @@ struct RootView: View {
                         detail(git: git)
                             .frame(minHeight: 240)
                         if showLog {
-                            CommandLogView()
+                            BottomPanel()
                                 .frame(minHeight: 80, idealHeight: 180)
                         }
                     }
@@ -43,7 +44,10 @@ struct RootView: View {
         .alert(item: $appState.alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message))
         }
-        .task { await dependencies.check() }
+        .task {
+            await dependencies.check()
+            await runs.removeLeftoverHerdLinks(searchPath: dependencies.searchPath)
+        }
         .onAppear { Appearance.apply(appearance) }
         .onChange(of: appearance) { _, new in Appearance.apply(new) }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -85,7 +89,7 @@ struct RootView: View {
             model = nil
             return
         }
-        model = ProjectModel(project: project, service: service(for: project, git: git), remoteTagCache: remoteTagCache)
+        model = ProjectModel(project: project, service: service(for: project, git: git), remoteTagCache: remoteTagCache, runs: runs)
     }
 
     private func service(for project: Project, git: GitRunner) -> GitService {

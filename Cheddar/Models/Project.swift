@@ -7,6 +7,8 @@ struct Project: Identifiable, Hashable, Codable {
     var path: String
     /// Per-project trunk override; nil means automatic (origin/HEAD, else main, else master).
     var trunk: String?
+    /// Run's dev command; nil means detected (`composer run dev`, else `<package manager> run dev`).
+    var devCommand: String?
 
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
     var url: URL { URL(fileURLWithPath: path, isDirectory: true) }

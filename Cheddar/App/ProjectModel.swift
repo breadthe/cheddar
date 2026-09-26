@@ -14,6 +14,8 @@ enum ProjectSheet: Identifiable {
     case trackRemote(RemoteBranch)
     /// `onRemotes`: the remotes that have it, or nil when no Fetch this session has checked.
     case renameTag(Tag, onRemotes: [String]?)
+    /// Run's dev command for the project. `then`: run this worktree once it's saved.
+    case devCommand(then: Worktree?)
 
     var id: String {
         switch self {
@@ -26,6 +28,7 @@ enum ProjectSheet: Identifiable {
         case .adopt(let worktree): "adopt-\(worktree.path)"
         case .trackRemote(let remote): "track-\(remote.ref)"
         case .renameTag(let tag, _): "rename-tag-\(tag.name)"
+        case .devCommand(let worktree): "dev-command-\(worktree?.path ?? "")"
         }
     }
 }
@@ -81,6 +84,8 @@ final class ProjectModel {
         didSet { remoteTagCache.byProject[project.path] = remoteTags }
     }
     @ObservationIgnored private let remoteTagCache: RemoteTagCache
+    /// App-wide, so a run outlives this model (switching projects rebuilds it).
+    @ObservationIgnored let runs: RunManager?
     /// Asks before moving an orphaned folder to the Trash.
     var orphanToTrash: OrphanFolder?
     /// Exclude offers the user chose "Not Now" for, this session.
@@ -107,10 +112,11 @@ final class ProjectModel {
     @ObservationIgnored private var pendingSince: Date?
     @ObservationIgnored private var debounceTask: Task<Void, Never>?
 
-    init(project: Project, service: GitService, remoteTagCache: RemoteTagCache = RemoteTagCache()) {
+    init(project: Project, service: GitService, remoteTagCache: RemoteTagCache = RemoteTagCache(), runs: RunManager? = nil) {
         self.project = project
         self.service = service
         self.remoteTagCache = remoteTagCache
+        self.runs = runs
         remoteTags = remoteTagCache.byProject[project.path]
     }
 
@@ -137,6 +143,8 @@ final class ProjectModel {
                 generation += 1
                 loadError = nil
                 await updateWatcher(for: fresh)
+                await runs?.reconcile(projectPath: project.path,
+                                      presentWorktrees: Set(fresh.worktrees.filter { !$0.isMissing }.map(\.path)))
             } catch is CancellationError {
             } catch {
                 noteToolMissing(error)
@@ -308,6 +316,13 @@ final class ProjectModel {
         } catch {
             report(error, title: "Couldn't start Claude Code")
         }
+    }
+
+    // MARK: Run
+
+    /// Runs the worktree like main (see `RunManager`). Not a mutation: it doesn't wait for, or block, git operations.
+    func run(_ worktree: Worktree, devCommand: String, searchPath: [String]) async {
+        await runs?.run(worktree, projectPath: project.path, devCommand: devCommand, service: service, searchPath: searchPath)
     }
 
     // MARK: Branches
