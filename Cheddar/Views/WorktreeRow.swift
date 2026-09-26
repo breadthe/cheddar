@@ -5,6 +5,8 @@ struct WorktreeRow: View {
     /// The branch checked out here, for ahead/behind and last commit.
     let branch: Branch?
     let trunk: String?
+    /// After Calculate Disk Usage; an upper bound (see `DiskUsage`).
+    var diskUsage: Int64?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -71,6 +73,13 @@ struct WorktreeRow: View {
             if let date {
                 Text("·")
                 Text(date, format: .relative(presentation: .named)).fixedSize()
+            }
+            if let diskUsage {
+                Text("·")
+                Label(DiskUsage.formatted(diskUsage), systemImage: "internaldrive")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize()
+                    .help("Up to \(DiskUsage.formatted(diskUsage)) on disk. Folders Run cloned from main share space with it.")
             }
         }
         .font(.caption)

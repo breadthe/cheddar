@@ -15,6 +15,7 @@ Cheddar is a native macOS app for managing git worktrees and branches. This manu
 - [Hand off](#hand-off)
 - [Adopting foreign worktrees](#adopting-foreign-worktrees)
 - [Orphaned and missing worktrees](#orphaned-and-missing-worktrees)
+- [Cleaning up](#cleaning-up)
 - [Fetching and comparing with remotes](#fetching-and-comparing-with-remotes)
 - [Filtering and search](#filtering-and-search)
 - [Command Log](#command-log)
@@ -116,7 +117,7 @@ Every non-missing worktree has an **Open** menu (hover a row, or double-click/Re
 - Every installed **editor**, plus VS Code and Cursor even if not installed (clicking shows install instructions).
 - **Claude Code Here** — opens a new Terminal window/tab and runs `claude` in it. The first time, macOS asks whether Cheddar may control Terminal (you can change this later in **System Settings → Privacy & Security → Automation**).
 
-The **Worktree** menu bar menu mirrors these for the selected worktree: **New Worktree…** (⌘N), **Open in `<editor>`** (⇧⌘E), **Hand Off…**, and **Delete…** (⌫).
+The **Worktree** menu bar menu mirrors these for the selected worktree: **New Worktree…** (⌘N), **Open in `<editor>`** (⇧⌘E), **Hand Off…**, and **Delete…** (⌫). It also has **Clean Up…** and **Calculate Disk Usage** for the project (see [Cleaning up](#cleaning-up)).
 
 ## Running a worktree
 
@@ -187,6 +188,23 @@ A worktree made by another tool (Claude Code, Codex, or anything else Cheddar di
 - **Missing** — a worktree git still has an entry for, but whose folder is gone. Click **Prune** to remove the stale entry.
 
 When a discovery root (like `.cheddar/worktrees` or `.claude/worktrees`) isn't yet excluded from git status, Cheddar offers to add it to `.git/info/exclude` so it stops appearing as untracked in your main checkout — no tracked files are changed.
+
+## Cleaning up
+
+### Merged branches and missing worktrees
+
+**Worktree → Clean Up…** (or the ✨ button in the Branches header) collects, in one sheet:
+
+- **Missing worktrees** — git still lists them but their folders are gone. They're pruned (git forgets them).
+- **Branches merged into trunk** that nothing has checked out. A branch whose only checkout is one of those missing worktrees is included too: it's pruned first, then the branch is deleted.
+
+Everything starts checked; uncheck what you want to keep, then **Clean Up**. Branches are deleted with `git branch -d`, so git still refuses one that isn't fully merged (for example, merged into trunk but your main checkout is on another branch). Those are listed as skipped, each with **Force Delete (-D)…**, as in [Deleting several branches](#deleting-several-branches). If there's nothing to clean, Cheddar says so.
+
+### Disk usage and build artifacts
+
+**Worktree → Calculate Disk Usage** (or the drive button in the Worktrees header) measures every worktree and shows its size on the row's second line. It's measured on request only, since walking `node_modules` takes a moment. Main's size leaves out the worktrees nested inside it, and links (like [Run](#running-a-worktree)'s links to main's database and uploads) don't count. Folders Run cloned from main (`vendor/`, `node_modules/`) share their disk space with main, but macOS reports them at full size, so treat the numbers as "up to".
+
+Right-click a worktree (not main) → **Clean Build Artifacts…** lists its dependency and build folders, with sizes: `node_modules`, `vendor`, `dist`, `build`, `out`, `target`, `coverage`, `.next`, `.nuxt`, `.svelte-kit`, `.astro`, `.turbo`, `.parcel-cache`, `.cache` and `public/build`. Only folders git ignores in that worktree are listed, and never `.env`, databases, uploads or Run's links. Uncheck what you want to keep, then **Move to Trash**. Empty the Trash to free the space; reinstall (or Run again, which clones from main) to get them back. A running worktree must be stopped first.
 
 ## Fetching and comparing with remotes
 

@@ -7,6 +7,8 @@ struct ProjectCommands {
     /// nil when the project has no remotes.
     var fetch: (() -> Void)?
     var newWorktree: () -> Void
+    var cleanUp: () -> Void
+    var measureDiskUsage: () -> Void
     /// The preferred editor (Settings → General).
     var editorName: String
     var openInEditor: (() -> Void)?
@@ -44,6 +46,11 @@ struct ProjectCommandMenus: Commands {
                 .disabled(project?.openInEditor == nil)
             Button("Hand Off…") { project?.handOffSelection?() }
                 .disabled(project?.isEnabled != true || project?.handOffSelection == nil)
+            Divider()
+            Button("Clean Up…") { project?.cleanUp() }
+                .disabled(project?.isEnabled != true)
+            Button("Calculate Disk Usage") { project?.measureDiskUsage() }
+                .disabled(project?.isEnabled != true)
             Divider()
             Button("Delete…") { project?.deleteSelection?() }
                 .keyboardShortcut(.delete)

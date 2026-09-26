@@ -7,6 +7,10 @@ enum ProjectSheet: Identifiable {
     case newBranch(base: String?)
     /// Delete Selected… in Branches.
     case deleteBranches([Branch])
+    /// Clean Up…: merged branches and missing worktrees, each can be unchecked.
+    case cleanUp(branches: [Branch], worktrees: [Worktree])
+    /// Clean Build Artifacts… for a linked worktree, with each candidate's size.
+    case cleanArtifacts(Worktree, [BuildArtifact])
     case rename(RenameRequest)
     case deleteWorktree(Worktree, changes: [String])
     case handoff(HandoffPreflight)
@@ -22,6 +26,8 @@ enum ProjectSheet: Identifiable {
         case .newWorktree(let branch): "new-worktree-\(branch ?? "")"
         case .newBranch(let base): "new-branch-\(base ?? "")"
         case .deleteBranches: "delete-branches"
+        case .cleanUp: "clean-up"
+        case .cleanArtifacts(let worktree, _): "clean-artifacts-\(worktree.path)"
         case .rename(let request): "rename-\(request.id)"
         case .deleteWorktree(let worktree, _): "delete-\(worktree.path)"
         case .handoff(let preflight): "handoff-\(preflight.worktree.path)"
@@ -88,6 +94,10 @@ final class ProjectModel {
     @ObservationIgnored let runs: RunManager?
     /// Asks before moving an orphaned folder to the Trash.
     var orphanToTrash: OrphanFolder?
+    /// Allocated bytes per worktree path, after Calculate Disk Usage; an upper bound (see `DiskUsage`).
+    private(set) var diskUsage: [String: Int64] = [:]
+    /// Measuring disk usage, or a worktree's build artifacts.
+    private(set) var isMeasuring = false
     /// Exclude offers the user chose "Not Now" for, this session.
     var dismissedExcludes: Set<String> = []
 
@@ -369,6 +379,92 @@ final class ProjectModel {
     /// `-D` for a branch the bulk delete skipped. Throws, so the summary sheet can show why it failed.
     func forceDeleteBranch(_ name: String) async throws {
         try await mutate { try await service.deleteBranch(name, force: true, in: repo) }
+    }
+
+    // MARK: Clean Up
+
+    /// What Clean Up offers: branches merged into trunk that nothing checks out, except a worktree that's
+    /// missing (pruning it frees the branch), and missing worktrees.
+    var cleanUpCandidates: (branches: [Branch], worktrees: [Worktree]) {
+        guard let snapshot else { return ([], []) }
+        let branches = snapshot.branches.filter { branch in
+            branch.isMerged && snapshot.worktree(checkingOut: branch.name)?.isMissing != false
+        }
+        return (branches, snapshot.worktrees.filter(\.isMissing))
+    }
+
+    /// Opens Clean Up…, or says there's nothing to clean.
+    func requestCleanUp() {
+        let candidates = cleanUpCandidates
+        if candidates.branches.isEmpty && candidates.worktrees.isEmpty {
+            alert = AppAlert(title: "Nothing to Clean Up", message: "No branches are merged into \(snapshot?.trunk ?? "trunk") and no worktrees are missing.")
+        } else {
+            sheet = .cleanUp(branches: candidates.branches, worktrees: candidates.worktrees)
+        }
+    }
+
+    /// Prunes the worktrees, then deletes the branches with `-d`, as one mutation.
+    func cleanUp(pruning worktrees: [Worktree], deletingBranches names: [String]) async throws -> BranchDeletionResult {
+        var result = BranchDeletionResult()
+        try await mutate { result = try await service.cleanUp(pruning: worktrees, deletingBranches: names, in: repo) }
+        checkedBranches.subtract(result.deleted)
+        return result
+    }
+
+    // MARK: Disk usage & build artifacts
+
+    /// Measures every present worktree (main without the linked worktrees nested in it), off the main thread.
+    func measureDiskUsage() async {
+        guard let worktrees = snapshot?.worktrees.filter({ !$0.isMissing }), !isMeasuring else { return }
+        isMeasuring = true
+        defer { isMeasuring = false }
+        let nested = Set(worktrees.filter { $0.origin != .main }.map(\.path))
+        let sizes = await withTaskGroup(of: (String, Int64).self) { group in
+            for worktree in worktrees {
+                let excluded = worktree.origin == .main ? nested : []
+                group.addTask { (worktree.path, DiskUsage.size(of: worktree.path, excluding: excluded)) }
+            }
+            return await group.reduce(into: [String: Int64]()) { $0[$1.0] = $1.1 }
+        }
+        diskUsage = sizes
+        service.git.log?.note("Measured disk usage of \(sizes.count) worktrees")
+    }
+
+    /// Finds the worktree's build artifacts that git ignores, measures them, then opens the sheet.
+    func requestCleanArtifacts(_ worktree: Worktree) async {
+        guard worktree.origin != .main, !worktree.isMissing, !isMeasuring else { return }
+        isMeasuring = true
+        defer { isMeasuring = false }
+        do {
+            let present = BuildArtifacts.present(in: worktree.path)
+            let ignored = try await service.ignoredPaths(present.map { $0 + "/" }, in: worktree.path)
+            let paths = present.filter { ignored.contains($0 + "/") }
+            let artifacts = await Task.detached {
+                paths.map { BuildArtifact(path: $0, size: DiskUsage.size(of: (worktree.path as NSString).appendingPathComponent($0))) }
+            }.value
+            if artifacts.isEmpty {
+                alert = AppAlert(title: "No Build Artifacts", message: "\(worktree.displayName) has no ignored dependency or build folders (\(BuildArtifacts.candidates.joined(separator: ", "))).")
+            } else {
+                sheet = .cleanArtifacts(worktree, artifacts)
+            }
+        } catch {
+            report(error, title: "Couldn't check \(worktree.displayName) for build artifacts")
+        }
+    }
+
+    /// Moves the folders to the Trash, as one mutation, then re-measures the worktree if it had been measured.
+    func cleanArtifacts(_ artifacts: [BuildArtifact], in worktree: Worktree) async throws {
+        try await mutate {
+            for artifact in artifacts {
+                let path = (worktree.path as NSString).appendingPathComponent(artifact.path)
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+                service.git.log?.note("Moved \(path) to the Trash (\(DiskUsage.formatted(artifact.size)))")
+            }
+        }
+        if diskUsage[worktree.path] != nil {
+            let path = worktree.path
+            diskUsage[path] = await Task.detached { DiskUsage.size(of: path) }.value
+        }
     }
 
     // MARK: Remotes

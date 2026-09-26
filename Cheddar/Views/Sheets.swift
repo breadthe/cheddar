@@ -439,40 +439,88 @@ struct DeleteWorktreeSheet: View {
 struct DeleteBranchesSheet: View {
     let model: ProjectModel
     let branches: [Branch]
+    /// Clean Up… also prunes these missing worktrees (first), and lets each item be unchecked.
+    var missingWorktrees: [Worktree] = []
+    var isCleanUp = false
     let trunk: String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var result: BranchDeletionResult?
     @State private var forceDelete: String?
     @State private var error: String?
+    /// Clean Up items left out: branch names and worktree paths.
+    @State private var unchecked: Set<String> = []
 
     var body: some View {
         if let result {
             summary(result)
         } else {
+            let names = branches.map(\.name).filter { !unchecked.contains($0) }
+            let worktrees = missingWorktrees.filter { !unchecked.contains($0.path) }
             SheetScaffold(
-                title: "Delete Branches",
-                actionTitle: branches.count == 1 ? "Delete Branch" : "Delete \(branches.count) Branches",
+                title: isCleanUp ? "Clean Up" : "Delete Branches",
+                actionTitle: isCleanUp ? "Clean Up" : (names.count == 1 ? "Delete Branch" : "Delete \(names.count) Branches"),
                 destructive: true,
+                canSubmit: !names.isEmpty || !worktrees.isEmpty,
                 dismissesOnSuccess: false
             ) {
-                result = try await model.deleteBranches(branches.map(\.name))
+                result = isCleanUp
+                    ? try await model.cleanUp(pruning: worktrees, deletingBranches: names)
+                    : try await model.deleteBranches(names)
             } fields: {
-                Section {
-                    ForEach(branches) { branch in
-                        LabeledContent {
-                            Text(details(of: branch)).foregroundStyle(.secondary)
-                        } label: {
-                            Text(branch.name).monospaced()
+                if !missingWorktrees.isEmpty {
+                    Section {
+                        ForEach(missingWorktrees) { worktree in
+                            item(worktree.path) {
+                                LabeledContent {
+                                    Text(worktree.branch ?? worktree.shortHead ?? "").monospaced().foregroundStyle(.secondary)
+                                } label: {
+                                    Text(worktree.displayName).monospaced()
+                                }
+                            }
                         }
+                    } header: {
+                        Text("Prune missing worktrees")
+                    } footer: {
+                        Text("Their folders are gone; this removes git's entry for each (git worktree remove).")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                } header: {
-                    Text("Delete \(branches.count == 1 ? "this branch" : "these \(branches.count) branches")?")
-                } footer: {
-                    Text("Each is deleted with git branch -d. Branches that aren't fully merged are skipped; you can force-delete them afterwards.")
-                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !branches.isEmpty {
+                    Section {
+                        ForEach(branches) { branch in
+                            item(branch.name) {
+                                LabeledContent {
+                                    Text(details(of: branch)).foregroundStyle(.secondary)
+                                } label: {
+                                    Text(branch.name).monospaced()
+                                }
+                            }
+                        }
+                    } header: {
+                        Text(isCleanUp
+                            ? "Delete branches merged into \(trunk ?? "trunk")"
+                            : "Delete \(branches.count == 1 ? "this branch" : "these \(branches.count) branches")?")
+                    } footer: {
+                        Text("Each is deleted with git branch -d. Branches that aren't fully merged are skipped; you can force-delete them afterwards.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
+        }
+    }
+
+    /// A checkbox in Clean Up; plain in Delete Selected… (the branch list already had checkboxes).
+    @ViewBuilder
+    private func item(_ id: String, @ViewBuilder label: () -> some View) -> some View {
+        if isCleanUp {
+            Toggle(isOn: Binding(
+                get: { !unchecked.contains(id) },
+                set: { if $0 { unchecked.remove(id) } else { unchecked.insert(id) } }
+            ), label: label)
+            .toggleStyle(.checkbox)
+        } else {
+            label()
         }
     }
 
@@ -486,6 +534,15 @@ struct DeleteBranchesSheet: View {
     private func summary(_ result: BranchDeletionResult) -> some View {
         VStack(spacing: 0) {
             Form {
+                if !result.pruned.isEmpty {
+                    Section("Pruned (\(result.pruned.count))") {
+                        ForEach(result.pruned, id: \.self) { name in
+                            Label { Text(name).monospaced() } icon: {
+                                Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
                 if !result.deleted.isEmpty {
                     Section("Deleted (\(result.deleted.count))") {
                         ForEach(result.deleted, id: \.self) { name in
@@ -537,7 +594,7 @@ struct DeleteBranchesSheet: View {
             .padding([.horizontal, .bottom], 20)
         }
         .frame(width: 480)
-        .navigationTitle("Deleted Branches")
+        .navigationTitle(isCleanUp ? "Cleaned Up" : "Deleted Branches")
         .unmergedBranchConfirmation($forceDelete) { name in
             await force(name)
         }
@@ -735,6 +792,58 @@ struct DevCommandSheet: View {
                 Text(detected.map { "Leave it empty to use \($0), found in this project." }
                     ?? "No composer.json or package.json dev script was found, so Run needs the command you use to start this project locally.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+// MARK: - Build artifacts
+
+/// Picks which of a worktree's dependency and build folders to move to the Trash.
+struct CleanArtifactsSheet: View {
+    let model: ProjectModel
+    let worktree: Worktree
+    let artifacts: [BuildArtifact]
+    /// Deleting them under a running dev server would break it.
+    let isRunning: Bool
+
+    @State private var unchecked: Set<String> = []
+
+    var body: some View {
+        let selected = artifacts.filter { !unchecked.contains($0.path) }
+        let total = selected.reduce(0) { $0 + $1.size }
+        SheetScaffold(
+            title: "Clean Build Artifacts",
+            actionTitle: "Move to Trash",
+            destructive: true,
+            canSubmit: !selected.isEmpty && !isRunning
+        ) {
+            try await model.cleanArtifacts(selected, in: worktree)
+        } fields: {
+            Section {
+                ForEach(artifacts) { artifact in
+                    Toggle(isOn: Binding(
+                        get: { !unchecked.contains(artifact.path) },
+                        set: { if $0 { unchecked.remove(artifact.path) } else { unchecked.insert(artifact.path) } }
+                    )) {
+                        LabeledContent {
+                            Text("up to \(DiskUsage.formatted(artifact.size))").foregroundStyle(.secondary)
+                        } label: {
+                            Text(artifact.path + "/").monospaced()
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            } header: {
+                Text(worktree.displayName)
+            } footer: {
+                Text("Up to \(DiskUsage.formatted(total)). Folders Run cloned from main share their space with main, so moving those frees little. Reinstall (or Run again) to get them back; empty the Trash to free the space.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if isRunning {
+                Section {
+                    Label("This worktree is running. Stop it first: its dev server uses these folders.", systemImage: "exclamationmark.triangle")
+                }
             }
         }
     }

@@ -75,12 +75,27 @@ struct ProjectView: View {
                         }
                     }
                 }
-                Section("Worktrees") {
+                Section {
                     ForEach(snapshot.worktrees.filter { matches($0.origin) && matches($0.displayName, $0.branch) }) { worktree in
                         worktreeRow(worktree, snapshot: snapshot)
                     }
                     ForEach(snapshot.orphans.filter { matches($0.origin) && matches($0.displayName) }) { orphan in
                         orphanRow(orphan)
+                    }
+                } header: {
+                    HStack {
+                        Text("Worktrees")
+                        Spacer()
+                        if model.isMeasuring { ProgressView().controlSize(.mini) }
+                        Button {
+                            Task { await model.measureDiskUsage() }
+                        } label: {
+                            Image(systemName: "internaldrive")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.isMeasuring)
+                        .help("Calculate Disk Usage")
+                        .accessibilityLabel("Calculate Disk Usage")
                     }
                 }
                 Section {
@@ -96,6 +111,15 @@ struct ProjectView: View {
                         Text("Branches")
                         Spacer()
                         bulkDeleteControls
+                        Button {
+                            model.requestCleanUp()
+                        } label: {
+                            Image(systemName: "sparkles")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.isBusy)
+                        .help("Clean Up… (branches merged into trunk, missing worktrees)")
+                        .accessibilityLabel("Clean Up")
                         Button {
                             model.sheet = .newBranch(base: nil)
                         } label: {
@@ -137,7 +161,7 @@ struct ProjectView: View {
         let tag = "w:\(worktree.path)"
         let branch = worktree.branch.flatMap { name in snapshot.branches.first { $0.name == name } }
         return HStack {
-            WorktreeRow(worktree: worktree, branch: branch, trunk: snapshot.trunk)
+            WorktreeRow(worktree: worktree, branch: branch, trunk: snapshot.trunk, diskUsage: model.diskUsage[worktree.path])
             if worktree.isMissing {
                 hoverButton("Prune", tag: tag, help: "Remove git's entry for this missing worktree") {
                     Task { await model.prune(worktree) }
@@ -542,6 +566,8 @@ struct ProjectView: View {
                 if worktree.origin.isForeign {
                     Button("Adopt into Cheddar…") { model.sheet = .adopt(worktree) }
                 }
+                Button("Clean Build Artifacts…") { Task { await model.requestCleanArtifacts(worktree) } }
+                    .disabled(model.isMeasuring)
                 Divider()
                 Button("Delete…", role: .destructive) {
                     Task { await model.requestDelete(worktree) }
@@ -720,6 +746,11 @@ struct ProjectView: View {
             NewBranchSheet(model: model, snapshot: snapshot, base: base)
         case .deleteBranches(let branches):
             DeleteBranchesSheet(model: model, branches: branches, trunk: snapshot.trunk)
+        case .cleanUp(let branches, let worktrees):
+            DeleteBranchesSheet(model: model, branches: branches, missingWorktrees: worktrees, isCleanUp: true, trunk: snapshot.trunk)
+        case .cleanArtifacts(let worktree, let artifacts):
+            CleanArtifactsSheet(model: model, worktree: worktree, artifacts: artifacts,
+                                isRunning: runs.sessions[worktree.path]?.isActive == true)
         case .rename(let request):
             RenameSheet(model: model, request: request)
         case .deleteWorktree(let worktree, let changes):
@@ -748,6 +779,8 @@ struct ProjectView: View {
             refresh: { Task { await model.load() } },
             fetch: model.snapshot?.remotes.isEmpty == false ? { Task { await model.fetch() } } : nil,
             newWorktree: { model.sheet = .newWorktree(existingBranch: nil) },
+            cleanUp: { model.requestCleanUp() },
+            measureDiskUsage: { Task { await model.measureDiskUsage() } },
             editorName: editor.name,
             openInEditor: selectedWorktree.map { worktree in { open(worktree, in: editor, tag: "w:\(worktree.path)") } },
             handOffSelection: selectedLinkedWorktree.map { worktree in { Task { await model.requestHandoff(worktree) } } },

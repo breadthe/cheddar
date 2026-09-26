@@ -156,9 +156,28 @@ extension GitService {
         }
         return result
     }
+
+    /// Clean Up: prunes missing worktrees, then deletes branches with `-d` (after the prunes, so a branch
+    /// whose only checkout was a missing worktree can go too). A refusal from git skips that item.
+    func cleanUp(pruning worktrees: [Worktree], deletingBranches names: [String], in repo: URL) async throws -> BranchDeletionResult {
+        var pruned: [String] = []
+        var notPruned: [BranchDeletionResult.Skipped] = []
+        for worktree in worktrees {
+            do {
+                try await prune(worktree, in: repo)
+                pruned.append(worktree.displayName)
+            } catch let error as GitError {
+                notPruned.append(.init(name: worktree.displayName, reason: error.localizedDescription, isUnmerged: false))
+            }
+        }
+        var result = try await deleteBranches(names, in: repo)
+        result.pruned = pruned
+        result.skipped.insert(contentsOf: notPruned, at: 0)
+        return result
+    }
 }
 
-/// What a bulk `git branch -d` did.
+/// What a bulk `git branch -d` (or Clean Up, which also prunes) did.
 struct BranchDeletionResult: Equatable {
     struct Skipped: Equatable, Identifiable {
         var id: String { name }
@@ -169,6 +188,9 @@ struct BranchDeletionResult: Equatable {
         var isUnmerged: Bool
     }
 
+    /// Missing worktrees pruned by Clean Up, by display name.
+    var pruned: [String] = []
     var deleted: [String] = []
+    /// Branches, and worktrees Clean Up couldn't prune.
     var skipped: [Skipped] = []
 }
