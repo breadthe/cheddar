@@ -16,6 +16,16 @@ See the [user manual](MANUAL.md) for everything the app can do.
 
 ## Build
 
+On a fresh Xcode install, first run the following. Installing Xcode doesn't make it the active developer directory: until you switch it, `xcodebuild` fails with "requires Xcode, but active developer directory ... is a command line tools instance". Homebrew and `xcodebuild` also refuse to run until the license is accepted.
+
+```sh
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+xcodebuild -runFirstLaunch
+```
+
+Then build:
+
 ```sh
 brew install xcodegen
 xcodegen generate
@@ -23,13 +33,6 @@ xcodebuild -scheme Cheddar -configuration Release -derivedDataPath build build
 ```
 
 The app is written to `build/Build/Products/Release/Cheddar.app`. To work in Xcode instead, run `open Cheddar.xcodeproj`. Signing is "Sign to Run Locally" (no team needed).
-
-On a fresh Xcode install, first run the following. Homebrew and `xcodebuild` refuse to run until the license is accepted.
-
-```sh
-sudo xcodebuild -license accept
-xcodebuild -runFirstLaunch
-```
 
 `Cheddar.xcodeproj` is generated and gitignored. Re-run `xcodegen generate` after adding or removing source files, or after editing `project.yml`.
 
