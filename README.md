@@ -3,8 +3,6 @@
 </p>
 <h1 align="center">Cheddar</h1>
 
----
-
 🚨 100% vibe-coded app. Free, but use at your own risk!
 
 ---
